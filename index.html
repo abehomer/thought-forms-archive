@@ -388,13 +388,15 @@ section { position:relative; }
 /* ─── PROCESS ────────────────────────────── */
 #process { background:#040406; }
 
-.pipeline { display:flex; align-items:center; justify-content:center; overflow-x:auto; padding-bottom:6px; margin:36px 0 32px; }
-.ps { display:flex; flex-direction:column; align-items:center; flex-shrink:0; min-width:100px; padding-top:10px; }
-.ps-icon { width:90px; height:90px; border:1px solid rgba(255,255,255,.18); background:#000; display:flex; align-items:center; justify-content:center; font-size:38px; margin-bottom:9px; position:relative; transition:border-color .2s; overflow:visible; }
+.pipeline { display:flex; align-items:flex-start; justify-content:center; overflow-x:auto; padding:14px 0 6px; margin:36px 0 32px; }
+.ps { display:flex; flex-direction:column; align-items:center; flex-shrink:0; min-width:100px; }
+.ps-icon { width:90px; height:90px; border:1px solid rgba(255,255,255,.18); background:#000; display:flex; align-items:center; justify-content:center; font-size:38px; margin-bottom:9px; position:relative; transition:border-color .2s; overflow:visible; color:rgba(255,255,255,.75); }
+.ps-icon svg { width:36px; height:36px; transition:stroke .2s; }
 .ps:hover .ps-icon { border-color:#00ccff; box-shadow:0 0 10px rgba(0,200,255,.25); }
+.ps:hover .ps-icon svg { stroke:#00ccff; }
 .ps-n { position:absolute; top:-8px; right:-8px; font-family:var(--mono); font-size:8px; background:#00ccff; color:#000; padding:1px 4px; z-index:1; }
 .ps-lbl { font-family:var(--mono); font-size:11px; letter-spacing:.1em; text-transform:uppercase; color:rgba(255,255,255,.58); text-align:center; max-width:86px; line-height:1.4; }
-.pa { color:rgba(255,255,255,.18); font-size:13px; flex-shrink:0; padding:0 2px; margin-bottom:20px; padding-top:10px; }
+.pa { color:rgba(255,255,255,.18); font-size:13px; flex-shrink:0; padding:0 2px; margin-top:33px; }
 
 .proc-cards { display:grid; grid-template-columns:repeat(3,1fr); gap:2px; }
 .pc { padding:18px; border:1px solid rgba(255,255,255,.09); background:#000; }
@@ -609,7 +611,7 @@ footer { padding:16px 40px; border-top:1px solid rgba(255,255,255,.07); display:
   </div>
   <div class="hero-title-block">
     <div class="hero-title-top">THOUGHT FORMS</div>
-    <div class="hero-ver">EEG × PARTICLE_AGG × ARCHIVE</div>
+    <div class="hero-ver">EEG × PARTICLE_AGGREGATION × ARCHIVE</div>
     <div style="font-family:var(--mono);font-size:11px;letter-spacing:.18em;color:rgba(255,255,255,.38);margin-top:6px;text-transform:uppercase;">Created by Abraham Homer</div>
   </div>
 
@@ -629,7 +631,7 @@ footer { padding:16px 40px; border-top:1px solid rgba(255,255,255,.07); display:
     <div class="about-grid fade-up">
       <div>
         <div class="td-panel" style="margin-bottom:20px;">
-          <div class="td-panel-hdr">ARCHIVE_STATEMENT.LOG</div>
+          <div class="td-panel-hdr">ARCHIVE_STATEMENT</div>
           <div class="td-panel-body">
             <div class="body-text">
               <p>Thought Forms is a brain–computer interface (BCI) project that translates human brain activity into dynamic, generative visual forms. Developed in TouchDesigner, the system uses a particle aggregation algorithm that responds in real time to EEG data collected from a wearable headset. Variations in brainwave signals associated with emotional and cognitive states such as stress, attention, engagement, and excitement directly influence the behavior, density, and structure of the evolving form.</p>
@@ -655,12 +657,12 @@ footer { padding:16px 40px; border-top:1px solid rgba(255,255,255,.07); display:
   <div class="section-inner">
     <div class="sec-header fade-up"><div class="sec-num">02</div><div><div class="sec-sys">// PIPELINE_OVERVIEW</div><div class="sec-title">SIGNAL TO <span class="c">FORM</span></div></div></div>
     <div class="pipeline fade-up">
-      <div class="ps"><div class="ps-icon">🧠<span class="ps-n">01</span></div><div class="ps-lbl">Stimulus Input</div></div><div class="pa">→</div>
-      <div class="ps"><div class="ps-icon">〰<span class="ps-n">02</span></div><div class="ps-lbl">EEG Capture</div></div><div class="pa">→</div>
-      <div class="ps"><div class="ps-icon">📊<span class="ps-n">03</span></div><div class="ps-lbl">Metric Extract</div></div><div class="pa">→</div>
-      <div class="ps"><div class="ps-icon">✦<span class="ps-n">04</span></div><div class="ps-lbl">Particle Sim</div></div><div class="pa">→</div>
-      <div class="ps"><div class="ps-icon">◈<span class="ps-n">05</span></div><div class="ps-lbl">3D Capture</div></div><div class="pa">→</div>
-      <div class="ps"><div class="ps-icon">🗂<span class="ps-n">06</span></div><div class="ps-lbl">Archive Entry</div></div>
+      <div class="ps"><div class="ps-icon"><svg width="32" height="32" viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.2"><circle cx="16" cy="11" r="5"/><path d="M8 27c0-4.4 3.6-8 8-8s8 3.6 8 8"/><path d="M4 14c1.5-1 3.5-1 5 0M23 14c1.5-1 3.5-1 5 0"/></svg><span class="ps-n">01</span></div><div class="ps-lbl">Stimulus Input</div></div><div class="pa">→</div>
+      <div class="ps"><div class="ps-icon"><svg width="32" height="32" viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.2"><path d="M2 16 h4 l3-8 4 16 4-12 3 8 h4"/><rect x="1" y="6" width="30" height="20" rx="1" stroke-width="0.8" stroke-dasharray="2 2"/></svg><span class="ps-n">02</span></div><div class="ps-lbl">EEG Capture</div></div><div class="pa">→</div>
+      <div class="ps"><div class="ps-icon"><svg width="32" height="32" viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.2"><rect x="4" y="20" width="4" height="8"/><rect x="10" y="14" width="4" height="14"/><rect x="16" y="8" width="4" height="20"/><rect x="22" y="4" width="4" height="24"/><path d="M4 20 L10 14 L16 8 L22 4" stroke-dasharray="2 2" stroke-width="0.8"/></svg><span class="ps-n">03</span></div><div class="ps-lbl">Metric Extract</div></div><div class="pa">→</div>
+      <div class="ps"><div class="ps-icon"><svg width="32" height="32" viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.2"><circle cx="16" cy="16" r="3"/><circle cx="7" cy="9" r="1.5"/><circle cx="25" cy="9" r="1.5"/><circle cx="7" cy="23" r="1.5"/><circle cx="25" cy="23" r="1.5"/><circle cx="16" cy="4" r="1.5"/><circle cx="16" cy="28" r="1.5"/><line x1="16" y1="13" x2="7" y2="10.4"/><line x1="16" y1="13" x2="25" y2="10.4"/><line x1="16" y1="19" x2="7" y2="21.6"/><line x1="16" y1="19" x2="25" y2="21.6"/><line x1="16" y1="13" x2="16" y2="5.5"/><line x1="16" y1="19" x2="16" y2="26.5"/></svg><span class="ps-n">04</span></div><div class="ps-lbl">Particle Sim</div></div><div class="pa">→</div>
+      <div class="ps"><div class="ps-icon"><svg width="32" height="32" viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.2"><path d="M16 4 L28 10 L28 22 L16 28 L4 22 L4 10 Z"/><path d="M16 4 L16 28M4 10 L28 22M28 10 L4 22"/></svg><span class="ps-n">05</span></div><div class="ps-lbl">3D Capture</div></div><div class="pa">→</div>
+      <div class="ps"><div class="ps-icon"><svg width="32" height="32" viewBox="0 0 32 32" fill="none" stroke="currentColor" stroke-width="1.2"><rect x="5" y="4" width="22" height="26" rx="1"/><line x1="9" y1="10" x2="23" y2="10"/><line x1="9" y1="15" x2="23" y2="15"/><line x1="9" y1="20" x2="18" y2="20"/><circle cx="22" cy="24" r="4"/><line x1="19.8" y1="24" x2="24.2" y2="24"/><line x1="22" y1="21.8" x2="22" y2="26.2"/></svg><span class="ps-n">06</span></div><div class="ps-lbl">Archive Entry</div></div>
     </div>
     <div class="proc-cards fade-up">
       <div class="pc"><div class="pc-sys">INPUT_LAYER</div><div class="pc-title">EEG & Metrics</div><p>A wearable EEG device continuously streams brainwave data. An SDK outputs six emotional indices — each normalized to 0–100 — sampled multiple times per second.</p></div>
@@ -691,7 +693,7 @@ footer { padding:16px 40px; border-top:1px solid rgba(255,255,255,.07); display:
 </section>
 
 <footer>
-  <div>THOUGHT FORMS © 2026 · EEG × PARTICLE_AGG × ARCHIVE</div>
+  <div>THOUGHT FORMS © 2026 · ABRAHAM HOMER · EEG × PARTICLE_AGGREGATION × ARCHIVE</div>
   <div style="display:flex;gap:18px;"></div>
 </footer>
 
@@ -782,6 +784,12 @@ const SPECIMENS = [
     prompt:'What do you carry that has no name?',
     description:'Rich purples and warm magentas with bursts of orange and gold. Emotionally dense and complex; high interest and engagement signal active internal processing.',
     date:'2025-01-14', metrics:{stress:55,interest:74,engagement:70,excitement:52,attention:60,relaxation:32} },
+  { id:'TF-009', title:'Sadness', dominant:'stress',
+    colorMap:'https://abehomer.github.io/thought-forms-archive/assets/sadness.webp',
+    glb:'https://raw.githubusercontent.com/abehomer/thought-forms-archive/main/assets/sadness.glb',
+    prompt:'What do you carry that has no name?',
+    description:'Deep blues saturate the form with scattered red and orange bursts. Low relaxation and excitement; elevated stress pulses through an otherwise subdued state.',
+    date:'2025-01-14', metrics:{stress:68,interest:48,engagement:55,excitement:18,attention:52,relaxation:14} },
 ];
 
 /* ═══════════════════════════════════════════════════
@@ -1101,22 +1109,13 @@ function createParticleRenderer(canvas, particles, opts={}){
   };
   const particles = buildParticleData(heroMetrics, 7000);
 
-  // Per-particle random scatter target (screen-space, pixels relative to center)
-  // Each particle gets a unique random destination for the chaos phase
-  const chaosOffsets = particles.map(() => ({
-    ox: (Math.random() - 0.5),
-    oy: (Math.random() - 0.5),
-    delay: Math.random() * 0.4,
-  }));
-
   let rotY=0, t=0;
   let hovering=false;
 
   // Raw timer — counts up while hovering, down while not
-  // Using a raw timer (not lerp) so we actually reach 1.0
   let sepRaw = 0;
-  const SEP_DUR  = 90;  // frames to fully separate
-  const SEP_RDUR = 60;  // frames to reassemble
+  const SEP_DUR  = 90;
+  const SEP_RDUR = 60;
 
   // Ring positions for each cluster (normalised -1..1 of canvas half-size)
   const SEP_BASE = {
@@ -1128,8 +1127,10 @@ function createParticleRenderer(canvas, particles, opts={}){
     relaxation: { ox: -0.56, oy:  0.30 },
   };
 
-  // Per-cluster independent drift (applied only when fully separated)
+  // Per-cluster independent drift
   const DRIFT = {};
+
+
   MKEYS.forEach(key => {
     DRIFT[key] = {
       px: Math.random()*Math.PI*2, py: Math.random()*Math.PI*2,
@@ -1153,11 +1154,9 @@ function createParticleRenderer(canvas, particles, opts={}){
   function drawHero(){
     requestAnimationFrame(drawHero);
     t += 0.003;
-    // Advance raw separation timer
-    if(hovering) sepRaw = Math.min(SEP_DUR,  sepRaw + 1);
-    else         sepRaw = Math.max(0,         sepRaw - 1);
-    const sep = sepRaw / SEP_DUR; // 0..1 linear
-    // Slow rotation as form separates
+    if(hovering) sepRaw = Math.min(SEP_DUR, sepRaw + 1);
+    else         sepRaw = Math.max(0,        sepRaw - 1);
+    const sep = sepRaw / SEP_DUR;
     rotY += 0.0035 * (1 - sep * 0.85);
 
     const W = canvas.offsetWidth, H = canvas.offsetHeight;
@@ -1169,6 +1168,7 @@ function createParticleRenderer(canvas, particles, opts={}){
     const scale = Math.min(W,H) * 0.52;
     const rotX  = 0.12 + Math.sin(t*0.2)*0.03;
     const SEP_R = Math.min(W,H) * 0.33;
+    const ease  = sep < 0.5 ? 2*sep*sep : -1+(4-2*sep)*sep;
 
     // Ghost sphere fades as form separates
     const sR = scale * 0.70;
@@ -1181,54 +1181,28 @@ function createParticleRenderer(canvas, particles, opts={}){
     ctx.beginPath(); ctx.arc(cx,cy,sR,0,Math.PI*2);
     ctx.fillStyle=sg; ctx.fill();
 
-    // Two phases:
-    // PHASE 1: sep 0→0.5  — chaos scatter (particles explode randomly)
-    // PHASE 2: sep 0.5→1  — order convergence (each color snaps to cluster)
-    const SPLIT = 0.5;
-
-    // Pre-compute cluster screen positions (only used in phase 2)
+    // Cluster screen positions — drift independently once separated
     const clusterScreenPos = {};
     MKEYS.forEach(key => {
-      const ct = clusterTarget(key, t, Math.max(0, sep*2-1));
-      clusterScreenPos[key] = {
-        x: cx + ct.ox * SEP_R,
-        y: cy + ct.oy * SEP_R,
-      };
+      const ct = clusterTarget(key, t, ease);
+      clusterScreenPos[key] = { x: cx + ct.ox * SEP_R, y: cy + ct.oy * SEP_R };
     });
 
-    // Project
+    // Project + lerp color clusters to their positions
     const proj = new Array(particles.length);
     for(let i=0; i<particles.length; i++){
       const p = particles[i];
-      const ch = chaosOffsets[i];
       let {px,py,fz} = project(p.x,p.y,p.z, rotY,rotX, cx,cy, scale);
 
-      if(p.metric && sep > 0.01){
-        if(sep <= SPLIT){
-          // PHASE 1 — chaos: scatter each particle to its random offset
-          const f = sep / SPLIT;                            // 0→1
-          const ef = f < 0.5 ? 2*f*f : -1+(4-2*f)*f;      // ease-in-out
-          // stagger start per particle
-          const local = Math.max(0, (f - ch.delay*0.6) / (1 - ch.delay*0.6));
-          px += ch.ox * scale * 0.55 * local;
-          py += ch.oy * scale * 0.55 * local;
-        } else {
-          // PHASE 2 — convergence: from scattered position toward cluster
-          const f = (sep - SPLIT) / (1 - SPLIT);           // 0→1
-          const ef = f < 0.5 ? 2*f*f : -1+(4-2*f)*f;
-          // scattered position this particle was at end of phase 1
-          const scx = px + ch.ox * scale * 0.55;
-          const scy = py + ch.oy * scale * 0.55;
-          const tx = clusterScreenPos[p.metric].x;
-          const ty = clusterScreenPos[p.metric].y;
-          px = scx + (tx - scx) * ef;
-          py = scy + (ty - scy) * ef;
-        }
-      } else if(!p.metric && sep > 0.01){
-        // Teal base contracts toward center
+      if(p.metric && SEP_BASE[p.metric] && ease > 0.001){
+        const tx = clusterScreenPos[p.metric].x;
+        const ty = clusterScreenPos[p.metric].y;
+        px = px + (tx - px) * ease;
+        py = py + (ty - py) * ease;
+      } else if(!p.metric && ease > 0.001){
         const dx = px - cx, dy = py - cy;
-        px = cx + dx * (1 - sep * 0.45);
-        py = cy + dy * (1 - sep * 0.45);
+        px = cx + dx * (1 - ease * 0.45);
+        py = cy + dy * (1 - ease * 0.45);
       }
 
       proj[i] = {px,py,fz, r:p.r,g:p.g,b:p.b, metric:p.metric||null};
@@ -1236,65 +1210,53 @@ function createParticleRenderer(canvas, particles, opts={}){
     proj.sort((a,b)=>a.fz-b.fz);
 
     const DOT_R = Math.max(1.0, scale * 0.0095);
+    const SPLIT = 0.5;
 
-    // Connecting lines between cluster centroids — appear in phase 2
+    // Connecting lines — appear in second half of separation
     if(sep > SPLIT){
       const lineSep = (sep - SPLIT) / (1 - SPLIT);
       const lineAlpha = lineSep;
-      const keys = MKEYS;
       ctx.save();
-      for(let a=0; a<keys.length; a++){
-        for(let b=a+1; b<keys.length; b++){
-          const ca = clusterScreenPos[keys[a]];
-          const cb = clusterScreenPos[keys[b]];
-          // Animated bezier control point — each pair has unique phase
+      for(let a=0; a<MKEYS.length; a++){
+        for(let b=a+1; b<MKEYS.length; b++){
+          const ca = clusterScreenPos[MKEYS[a]];
+          const cb = clusterScreenPos[MKEYS[b]];
           const pairPhase = (a * 7 + b * 13) * 0.4;
-          const midX = (ca.x+cb.x)/2 + Math.sin(t*1.1+pairPhase) * scale * 0.14;
-          const midY = (ca.y+cb.y)/2 + Math.cos(t*0.85+pairPhase) * scale * 0.14;
-          const grad = ctx.createLinearGradient(ca.x, ca.y, cb.x, cb.y);
-          grad.addColorStop(0, MC[keys[a]]);
-          grad.addColorStop(1, MC[keys[b]]);
+          const ax = ca.x, ay = ca.y, bx = cb.x, by = cb.y;
+          const midX = (ax+bx)/2 + Math.sin(t*1.1+pairPhase) * scale * 0.08;
+          const midY = (ay+by)/2 + Math.cos(t*0.85+pairPhase) * scale * 0.08;
+          const grad = ctx.createLinearGradient(ax, ay, bx, by);
+          grad.addColorStop(0, MC[MKEYS[a]]);
+          grad.addColorStop(1, MC[MKEYS[b]]);
           ctx.strokeStyle = grad;
-          // Outer glow
-          ctx.lineWidth = scale * 0.022;
-          ctx.globalAlpha = lineAlpha * 0.15;
-          ctx.beginPath(); ctx.moveTo(ca.x,ca.y); ctx.quadraticCurveTo(midX,midY,cb.x,cb.y); ctx.stroke();
-          // Mid glow
-          ctx.lineWidth = scale * 0.009;
-          ctx.globalAlpha = lineAlpha * 0.4;
-          ctx.beginPath(); ctx.moveTo(ca.x,ca.y); ctx.quadraticCurveTo(midX,midY,cb.x,cb.y); ctx.stroke();
-          // Sharp core
-          ctx.lineWidth = scale * 0.003;
-          ctx.globalAlpha = lineAlpha * 0.95;
-          ctx.beginPath(); ctx.moveTo(ca.x,ca.y); ctx.quadraticCurveTo(midX,midY,cb.x,cb.y); ctx.stroke();
+          ctx.lineWidth = scale * 0.028;
+          ctx.globalAlpha = lineAlpha * 0.28;
+          ctx.beginPath(); ctx.moveTo(ax,ay); ctx.quadraticCurveTo(midX,midY,bx,by); ctx.stroke();
+          ctx.lineWidth = scale * 0.010;
+          ctx.globalAlpha = lineAlpha * 0.65;
+          ctx.beginPath(); ctx.moveTo(ax,ay); ctx.quadraticCurveTo(midX,midY,bx,by); ctx.stroke();
+          ctx.lineWidth = scale * 0.004;
+          ctx.globalAlpha = lineAlpha;
+          ctx.beginPath(); ctx.moveTo(ax,ay); ctx.quadraticCurveTo(midX,midY,bx,by); ctx.stroke();
         }
       }
       ctx.restore();
     }
 
     // Draw particles
-    const DOT_R2 = DOT_R * (1 + sep * 0.6);
     for(let i=0; i<proj.length; i++){
       const p = proj[i];
       const baseAlpha = 0.78 + p.fz * 0.10;
-
-      if(p.metric && sep > 0.01){
-        const boost = sep * 2.0;
+      if(p.metric && ease > 0.001){
+        const boost = ease * 1.8;
         const r = Math.min(255, Math.round(p.r * (1 + boost)));
         const g = Math.min(255, Math.round(p.g * (1 + boost)));
         const b = Math.min(255, Math.round(p.b * (1 + boost)));
-        // Glow only in phase 2
-        if(sep > SPLIT){
-          const gf = (sep - SPLIT)/(1-SPLIT);
-          ctx.globalAlpha = gf * 0.20;
-          ctx.fillStyle = `rgb(${r},${g},${b})`;
-          ctx.beginPath(); ctx.arc(p.px,p.py,DOT_R*4,0,Math.PI*2); ctx.fill();
-        }
-        ctx.globalAlpha = Math.min(1, baseAlpha + sep * 0.35);
+        ctx.globalAlpha = Math.min(1, baseAlpha + ease * 0.3);
         ctx.fillStyle = `rgb(${r},${g},${b})`;
-        ctx.beginPath(); ctx.arc(p.px,p.py,DOT_R2,0,Math.PI*2); ctx.fill();
+        ctx.beginPath(); ctx.arc(p.px,p.py,DOT_R*(1+ease*0.5),0,Math.PI*2); ctx.fill();
       } else if(!p.metric){
-        ctx.globalAlpha = baseAlpha * (1 - sep * 0.7);
+        ctx.globalAlpha = baseAlpha * (1 - ease * 0.7);
         ctx.fillStyle = `rgb(${p.r},${p.g},${p.b})`;
         ctx.beginPath(); ctx.arc(p.px,p.py,DOT_R,0,Math.PI*2); ctx.fill();
       } else {
@@ -1305,7 +1267,7 @@ function createParticleRenderer(canvas, particles, opts={}){
     }
     ctx.globalAlpha = 1;
 
-    // Draw cluster labels — appear in phase 2
+    // Draw cluster labels — appear in second half
     if(sep > SPLIT){
       const labelAlpha = Math.min(1, (sep - SPLIT) / (1-SPLIT));
       ctx.save();
