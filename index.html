@@ -330,19 +330,36 @@ nav {
 /* Scroll hint */
 .hero-scroll {
   position:absolute; bottom:44px; right:32px;
-  display:flex; flex-direction:column; align-items:center; gap:6px;
-  font-family:var(--mono); font-size:9px;
-  letter-spacing:.22em; color:rgba(255,255,255,.48);
-  text-transform:uppercase; z-index:10;
+  display:flex; flex-direction:column; align-items:center; gap:10px;
+  font-family:var(--mono); font-size:10px;
+  letter-spacing:.28em; color:rgba(255,255,255,.65);
+  text-transform:uppercase; z-index:10; font-size:13px;
+  animation: scrollFade 2.8s ease-in-out infinite;
 }
-.scroll-line { width:1px; height:36px; background:linear-gradient(to bottom,rgba(255,255,255,.2),transparent); }
+@keyframes scrollFade {
+  0%,100% { opacity:0.3; transform:translateY(0); }
+  50%      { opacity:1;   transform:translateY(6px); }
+}
+.scroll-line {
+  width:1px; height:64px;
+  background:linear-gradient(to bottom, rgba(0,204,255,.8), transparent);
+  position:relative;
+}
+.scroll-line::after {
+  content:'';
+  position:absolute; bottom:0; left:50%; transform:translateX(-50%);
+  width:7px; height:7px;
+  border-right:1px solid rgba(0,204,255,.8);
+  border-bottom:1px solid rgba(0,204,255,.8);
+  transform:translateX(-50%) rotate(45deg);
+}
 
 /* ─── SHARED SECTION STYLES ──────────────── */
 section { position:relative; }
 .section-inner { max-width:1200px; margin:0 auto; padding:80px 40px; }
 
 .sec-header { display:flex; align-items:flex-end; gap:18px; margin-bottom:44px; padding-bottom:10px; border-bottom:1px solid rgba(255,255,255,.1); }
-.sec-num { font-family:var(--vt); font-size:44px; color:rgba(255,255,255,.07); line-height:1; }
+.sec-num { font-family:var(--vt); font-size:22px; color:#ffffff; line-height:1; }
 .sec-sys { font-family:var(--mono); font-size:11px; letter-spacing:.3em; color:#00ccff; text-transform:uppercase; margin-bottom:4px; opacity:.65; }
 .sec-title { font-family:var(--vt); font-size:36px; color:#fff; letter-spacing:.1em; text-transform:uppercase; }
 .sec-title .c { color:#00ccff; }
@@ -771,6 +788,12 @@ const SPECIMENS = [
     prompt:'What thought are you finished with but cannot release?',
     description:'High stress alongside strong relaxation and excitement; an unusual combination that produced an energetic, diffuse form.',
     date:'2025-03-05', metrics:{stress:84,interest:56,engagement:51,excitement:64,attention:25,relaxation:69} },
+  { id:'TF-010', title:'Pride', dominant:'interest',
+    colorMap:'https://abehomer.github.io/thought-forms-archive/assets/pride.webp',
+    glb:'https://raw.githubusercontent.com/abehomer/thought-forms-archive/main/assets/pride.glb',
+    prompt:'What have you built that you would not trade away?',
+    description:'A richly diverse palette — blues, teals, magentas, oranges and greens in high density. High interest and engagement signal expansive, outward-facing activation.',
+    date:'2025-03-05', metrics:{stress:42,interest:84,engagement:80,excitement:76,attention:68,relaxation:35} },
   { id:'TF-007', title:'Vulnerability', dominant:'engagement',
     colorMap:'https://abehomer.github.io/thought-forms-archive/assets/vulnerability.webp',
     glb:'https://raw.githubusercontent.com/abehomer/thought-forms-archive/main/assets/vulnerability.glb',
@@ -1148,8 +1171,10 @@ function createParticleRenderer(canvas, particles, opts={}){
     };
   }
 
-  canvas.addEventListener('mouseenter', () => { hovering = true; });
-  canvas.addEventListener('mouseleave', () => { hovering = false; label.classList.remove('visible'); });
+  canvas.addEventListener('click', () => {
+    hovering = !hovering;
+    if(!hovering) label.classList.remove('visible');
+  });
 
   function drawHero(){
     requestAnimationFrame(drawHero);
