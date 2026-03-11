@@ -589,7 +589,7 @@ footer { padding:16px 40px; border-top:1px solid rgba(255,255,255,.07); display:
     </div>
   </div>
   <div style="display:flex;align-items:center;gap:16px;">
-    <span class="nav-ver">v3.2</span>
+    
     <div class="nav-links">
       <a onclick="sTo('about')">About</a>
       <a onclick="sTo('process')">Process</a>
@@ -609,7 +609,8 @@ footer { padding:16px 40px; border-top:1px solid rgba(255,255,255,.07); display:
   </div>
   <div class="hero-title-block">
     <div class="hero-title-top">THOUGHT FORMS</div>
-    <div class="hero-ver">v3.2 · EEG × PARTICLE_AGG × ARCHIVE · ABRAHAM HOMER</div>
+    <div class="hero-ver">EEG × PARTICLE_AGG × ARCHIVE</div>
+    <div style="font-family:var(--mono);font-size:11px;letter-spacing:.18em;color:rgba(255,255,255,.38);margin-top:6px;text-transform:uppercase;">Created by Abraham Homer</div>
   </div>
 
   <div class="hero-scroll">
@@ -675,7 +676,7 @@ footer { padding:16px 40px; border-top:1px solid rgba(255,255,255,.07); display:
 <section id="archive">
   <div class="section-inner">
     <div class="sec-header fade-up"><div class="sec-num">03</div><div><div class="sec-sys">// SPECIMEN_DATABASE</div><div class="sec-title">THE <span class="c">COLLECTION</span></div></div></div>
-    <div class="arch-bar fade-up"><div style="display:flex;align-items:center;gap:8px;"><div class="adot"></div><span id="arch-count">ARCHIVE_ONLINE · 6 SPECIMENS INDEXED</span></div><div>v3.2</div></div>
+    <div class="arch-bar fade-up"><div style="display:flex;align-items:center;gap:8px;"><div class="adot"></div><span id="arch-count">ARCHIVE_ONLINE · 6 SPECIMENS INDEXED</span></div></div>
     <div class="frow fade-up" id="frow">
       <button class="fbtn active" data-f="all">ALL</button>
       <button class="fbtn" data-f="stress">STRESS</button>
@@ -690,8 +691,8 @@ footer { padding:16px 40px; border-top:1px solid rgba(255,255,255,.07); display:
 </section>
 
 <footer>
-  <div>THOUGHT FORMS © 2025 · <span style="color:rgba(255,255,255,.70)">ABRAHAM HOMER</span> · EEG × PARTICLE_AGG × ARCHIVE</div>
-  <div style="display:flex;gap:18px;"><span style="color:#00ff44">SYS_ONLINE</span></div>
+  <div>THOUGHT FORMS © 2026 · EEG × PARTICLE_AGG × ARCHIVE</div>
+  <div style="display:flex;gap:18px;"></div>
 </footer>
 
 <!-- MODAL -->
@@ -700,7 +701,7 @@ footer { padding:16px 40px; border-top:1px solid rgba(255,255,255,.07); display:
   <div class="modal" id="modal">
     <div class="m-canvas-wrap" id="m-canvas-wrap">
       <div class="m-hud">
-        <div class="mhud-sys">INTERACTIVE · v3.2</div>
+        
         <div class="mhud-id" id="mhud-id">—</div>
         <div class="mhud-drag">DRAG TO ROTATE</div>
       </div>
@@ -728,11 +729,12 @@ const MKEYS = Object.keys(MC);
    SPECIMEN DATA
 ═══════════════════════════════════════════════════ */
 const SPECIMENS = [
-  { id:'TF-001', title:'Liminal Weight', dominant:'stress',
+  { id:'TF-001', title:'Nostalgia', dominant:'interest',
+    colorMap:'https://abehomer.github.io/thought-forms-archive/assets/nostalgia.webp',
+    glb:'https://raw.githubusercontent.com/abehomer/thought-forms-archive/main/assets/nostalgia.glb',
     prompt:'What do you carry that has no name?',
-    description:'Generated during extended unfocused rumination. Low attention paired with high stress.',
-    interpretation:'The form suggests something like held grief: organized enough to have weight, chaotic enough to resist resolution. The tight nucleus is surrounded by a halo of dispersed fragments.',
-    date:'2025-01-14', metrics:{stress:81,interest:44,engagement:44,excitement:19,attention:28,relaxation:22} },
+    description:'Deep blues with scattered magenta clusters and warm memory bursts. A cool, reflective state punctuated by moments of vivid recall.',
+    date:'2025-01-14', metrics:{stress:44,interest:72,engagement:65,excitement:35,attention:58,relaxation:42} },
   { id:'TF-002', title:'Love', dominant:'excitement',
     colorMap:'https://abehomer.github.io/thought-forms-archive/assets/love.webp',
     glb:'https://raw.githubusercontent.com/abehomer/thought-forms-archive/main/assets/love.glb',
@@ -774,6 +776,12 @@ const SPECIMENS = [
     description:'Captured during a session of sustained emotional exposure. High engagement paired with interest; the subject was present and open, not retreating.',
     interpretation:'Unlike most high-stress specimens, this form reaches outward. The structure is open, almost offering itself. Vulnerability rendered not as wound but as gesture.',
     date:'2026-03-09', metrics:{stress:45,interest:56,engagement:66,excitement:29,attention:40,relaxation:32} },
+  { id:'TF-008', title:'Grief', dominant:'interest',
+    colorMap:'https://abehomer.github.io/thought-forms-archive/assets/grief.webp',
+    glb:'https://raw.githubusercontent.com/abehomer/thought-forms-archive/main/assets/grief.glb',
+    prompt:'What do you carry that has no name?',
+    description:'Rich purples and warm magentas with bursts of orange and gold. Emotionally dense and complex; high interest and engagement signal active internal processing.',
+    date:'2025-01-14', metrics:{stress:55,interest:74,engagement:70,excitement:52,attention:60,relaxation:32} },
 ];
 
 /* ═══════════════════════════════════════════════════
