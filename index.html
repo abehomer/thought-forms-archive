@@ -1100,139 +1100,238 @@ function createParticleRenderer(canvas, particles, opts={}){
     relaxation: randMetric(),
   };
   const particles = buildParticleData(heroMetrics, 7000);
-  let rotY=0, t=0;
-  let mouseX=-9999, mouseY=-9999, hovering=false;
-  let activeMetric = null;
-  let labelFade = 0; // 0..1 smooth transition
 
-  canvas.addEventListener('mousemove', e => {
-    const rect = canvas.getBoundingClientRect();
-    mouseX = e.clientX - rect.left;
-    mouseY = e.clientY - rect.top;
-    hovering = true;
+  // Per-particle random scatter target (screen-space, pixels relative to center)
+  // Each particle gets a unique random destination for the chaos phase
+  const chaosOffsets = particles.map(() => ({
+    ox: (Math.random() - 0.5),
+    oy: (Math.random() - 0.5),
+    delay: Math.random() * 0.4,
+  }));
+
+  let rotY=0, t=0;
+  let hovering=false;
+
+  // Raw timer — counts up while hovering, down while not
+  // Using a raw timer (not lerp) so we actually reach 1.0
+  let sepRaw = 0;
+  const SEP_DUR  = 90;  // frames to fully separate
+  const SEP_RDUR = 60;  // frames to reassemble
+
+  // Ring positions for each cluster (normalised -1..1 of canvas half-size)
+  const SEP_BASE = {
+    stress:     { ox:  0.00, oy:  0.60 },
+    attention:  { ox:  0.56, oy:  0.30 },
+    engagement: { ox:  0.56, oy: -0.30 },
+    interest:   { ox:  0.00, oy: -0.60 },
+    excitement: { ox: -0.56, oy: -0.30 },
+    relaxation: { ox: -0.56, oy:  0.30 },
+  };
+
+  // Per-cluster independent drift (applied only when fully separated)
+  const DRIFT = {};
+  MKEYS.forEach(key => {
+    DRIFT[key] = {
+      px: Math.random()*Math.PI*2, py: Math.random()*Math.PI*2,
+      fx: 0.15 + Math.random()*0.12, fy: 0.18 + Math.random()*0.12,
+      ax: 0.06 + Math.random()*0.05, ay: 0.05 + Math.random()*0.05,
+    };
   });
-  canvas.addEventListener('mouseleave', () => {
-    hovering = false; mouseX=-9999; mouseY=-9999;
-    activeMetric = null;
-    label.classList.remove('visible');
-  });
+
+  function clusterTarget(key, t, sep){
+    const base = SEP_BASE[key];
+    const d = DRIFT[key];
+    return {
+      ox: base.ox + Math.sin(t*d.fx+d.px)*d.ax*sep,
+      oy: base.oy + Math.cos(t*d.fy+d.py)*d.ay*sep,
+    };
+  }
+
+  canvas.addEventListener('mouseenter', () => { hovering = true; });
+  canvas.addEventListener('mouseleave', () => { hovering = false; label.classList.remove('visible'); });
 
   function drawHero(){
     requestAnimationFrame(drawHero);
     t += 0.003;
-    rotY += 0.0035;
+    // Advance raw separation timer
+    if(hovering) sepRaw = Math.min(SEP_DUR,  sepRaw + 1);
+    else         sepRaw = Math.max(0,         sepRaw - 1);
+    const sep = sepRaw / SEP_DUR; // 0..1 linear
+    // Slow rotation as form separates
+    rotY += 0.0035 * (1 - sep * 0.85);
+
     const W = canvas.offsetWidth, H = canvas.offsetHeight;
     if(canvas.width!==W||canvas.height!==H){ canvas.width=W; canvas.height=H; }
-
     ctx.clearRect(0,0,W,H);
     ctx.fillStyle='#000'; ctx.fillRect(0,0,W,H);
 
     const cx=W/2, cy=H/2;
     const scale = Math.min(W,H) * 0.52;
     const rotX  = 0.12 + Math.sin(t*0.2)*0.03;
+    const SEP_R = Math.min(W,H) * 0.33;
 
-    // Ghost sphere
+    // Ghost sphere fades as form separates
     const sR = scale * 0.70;
     const sg = ctx.createRadialGradient(cx,cy,0,cx,cy,sR);
-    sg.addColorStop(0,   'rgba(72,80,95,0.30)');
-    sg.addColorStop(0.55,'rgba(52,60,74,0.22)');
-    sg.addColorStop(0.88,'rgba(32,38,50,0.12)');
+    const sA = 1 - sep * 0.95;
+    sg.addColorStop(0,   `rgba(72,80,95,${(0.30*sA).toFixed(3)})`);
+    sg.addColorStop(0.55,`rgba(52,60,74,${(0.22*sA).toFixed(3)})`);
+    sg.addColorStop(0.88,`rgba(32,38,50,${(0.12*sA).toFixed(3)})`);
     sg.addColorStop(1,   'rgba(0,0,0,0)');
     ctx.beginPath(); ctx.arc(cx,cy,sR,0,Math.PI*2);
     ctx.fillStyle=sg; ctx.fill();
+
+    // Two phases:
+    // PHASE 1: sep 0→0.5  — chaos scatter (particles explode randomly)
+    // PHASE 2: sep 0.5→1  — order convergence (each color snaps to cluster)
+    const SPLIT = 0.5;
+
+    // Pre-compute cluster screen positions (only used in phase 2)
+    const clusterScreenPos = {};
+    MKEYS.forEach(key => {
+      const ct = clusterTarget(key, t, Math.max(0, sep*2-1));
+      clusterScreenPos[key] = {
+        x: cx + ct.ox * SEP_R,
+        y: cy + ct.oy * SEP_R,
+      };
+    });
 
     // Project
     const proj = new Array(particles.length);
     for(let i=0; i<particles.length; i++){
       const p = particles[i];
-      const {px,py,fz} = project(p.x,p.y,p.z, rotY,rotX, cx,cy, scale);
+      const ch = chaosOffsets[i];
+      let {px,py,fz} = project(p.x,p.y,p.z, rotY,rotX, cx,cy, scale);
+
+      if(p.metric && sep > 0.01){
+        if(sep <= SPLIT){
+          // PHASE 1 — chaos: scatter each particle to its random offset
+          const f = sep / SPLIT;                            // 0→1
+          const ef = f < 0.5 ? 2*f*f : -1+(4-2*f)*f;      // ease-in-out
+          // stagger start per particle
+          const local = Math.max(0, (f - ch.delay*0.6) / (1 - ch.delay*0.6));
+          px += ch.ox * scale * 0.55 * local;
+          py += ch.oy * scale * 0.55 * local;
+        } else {
+          // PHASE 2 — convergence: from scattered position toward cluster
+          const f = (sep - SPLIT) / (1 - SPLIT);           // 0→1
+          const ef = f < 0.5 ? 2*f*f : -1+(4-2*f)*f;
+          // scattered position this particle was at end of phase 1
+          const scx = px + ch.ox * scale * 0.55;
+          const scy = py + ch.oy * scale * 0.55;
+          const tx = clusterScreenPos[p.metric].x;
+          const ty = clusterScreenPos[p.metric].y;
+          px = scx + (tx - scx) * ef;
+          py = scy + (ty - scy) * ef;
+        }
+      } else if(!p.metric && sep > 0.01){
+        // Teal base contracts toward center
+        const dx = px - cx, dy = py - cy;
+        px = cx + dx * (1 - sep * 0.45);
+        py = cy + dy * (1 - sep * 0.45);
+      }
+
       proj[i] = {px,py,fz, r:p.r,g:p.g,b:p.b, metric:p.metric||null};
     }
     proj.sort((a,b)=>a.fz-b.fz);
 
-    const DOT_R  = Math.max(1.0, scale * 0.0095);
-    const SENSE_R = Math.min(W,H) * 0.10; // detection radius
+    const DOT_R = Math.max(1.0, scale * 0.0095);
 
-    // Find closest metric particle to cursor
-    let closestDist = Infinity, closestMetric = null, closestPx = 0, closestPy = 0;
-    if(hovering){
-      for(let i=0; i<proj.length; i++){
-        const p = proj[i];
-        if(!p.metric) continue;
-        const dx = p.px - mouseX, dy = p.py - mouseY;
-        const d  = Math.sqrt(dx*dx + dy*dy);
-        if(d < closestDist){ closestDist=d; closestMetric=p.metric; closestPx=p.px; closestPy=p.py; }
+    // Connecting lines between cluster centroids — appear in phase 2
+    if(sep > SPLIT){
+      const lineSep = (sep - SPLIT) / (1 - SPLIT);
+      const lineAlpha = lineSep;
+      const keys = MKEYS;
+      ctx.save();
+      for(let a=0; a<keys.length; a++){
+        for(let b=a+1; b<keys.length; b++){
+          const ca = clusterScreenPos[keys[a]];
+          const cb = clusterScreenPos[keys[b]];
+          // Animated bezier control point — each pair has unique phase
+          const pairPhase = (a * 7 + b * 13) * 0.4;
+          const midX = (ca.x+cb.x)/2 + Math.sin(t*1.1+pairPhase) * scale * 0.14;
+          const midY = (ca.y+cb.y)/2 + Math.cos(t*0.85+pairPhase) * scale * 0.14;
+          const grad = ctx.createLinearGradient(ca.x, ca.y, cb.x, cb.y);
+          grad.addColorStop(0, MC[keys[a]]);
+          grad.addColorStop(1, MC[keys[b]]);
+          ctx.strokeStyle = grad;
+          // Outer glow
+          ctx.lineWidth = scale * 0.022;
+          ctx.globalAlpha = lineAlpha * 0.15;
+          ctx.beginPath(); ctx.moveTo(ca.x,ca.y); ctx.quadraticCurveTo(midX,midY,cb.x,cb.y); ctx.stroke();
+          // Mid glow
+          ctx.lineWidth = scale * 0.009;
+          ctx.globalAlpha = lineAlpha * 0.4;
+          ctx.beginPath(); ctx.moveTo(ca.x,ca.y); ctx.quadraticCurveTo(midX,midY,cb.x,cb.y); ctx.stroke();
+          // Sharp core
+          ctx.lineWidth = scale * 0.003;
+          ctx.globalAlpha = lineAlpha * 0.95;
+          ctx.beginPath(); ctx.moveTo(ca.x,ca.y); ctx.quadraticCurveTo(midX,midY,cb.x,cb.y); ctx.stroke();
+        }
       }
-    }
-
-    // Update label
-    if(hovering && closestMetric && closestDist < SENSE_R){
-      const col = MC[closestMetric];
-      hlDot.style.background = col;
-      hlDot.style.color = col;
-      hlDot.style.boxShadow = `0 0 14px 5px ${col}`;
-      hlName.textContent = METRIC_LABELS[closestMetric];
-      hlName.style.color = col;
-      hlSys.textContent  = `${heroMetrics[closestMetric]}% · EEG_SIGNAL`;
-      // Position above cursor
-      label.style.left = mouseX + 'px';
-      label.style.top  = (mouseY - 10) + 'px';
-      label.classList.add('visible');
-      activeMetric = closestMetric;
-    } else {
-      label.classList.remove('visible');
-      activeMetric = closestMetric && closestDist < SENSE_R * 2 ? closestMetric : null;
+      ctx.restore();
     }
 
     // Draw particles
+    const DOT_R2 = DOT_R * (1 + sep * 0.6);
     for(let i=0; i<proj.length; i++){
       const p = proj[i];
       const baseAlpha = 0.78 + p.fz * 0.10;
 
-      if(hovering && p.metric){
-        const isActive = p.metric === activeMetric;
-        const dx = p.px - mouseX, dy = p.py - mouseY;
-        const dist = Math.sqrt(dx*dx + dy*dy);
-        const inZone = dist < SENSE_R * 1.8;
-
-        if(isActive && inZone){
-          // Brightly lit — full color, swelled
-          const prox  = Math.max(0, 1 - dist/(SENSE_R*1.8));
-          const boost = prox * prox;
-          const r = Math.min(255, Math.round(p.r * (1 + boost*2.0)));
-          const g = Math.min(255, Math.round(p.g * (1 + boost*2.0)));
-          const b = Math.min(255, Math.round(p.b * (1 + boost*2.0)));
-          // Soft halo
-          ctx.globalAlpha = boost * 0.2;
+      if(p.metric && sep > 0.01){
+        const boost = sep * 2.0;
+        const r = Math.min(255, Math.round(p.r * (1 + boost)));
+        const g = Math.min(255, Math.round(p.g * (1 + boost)));
+        const b = Math.min(255, Math.round(p.b * (1 + boost)));
+        // Glow only in phase 2
+        if(sep > SPLIT){
+          const gf = (sep - SPLIT)/(1-SPLIT);
+          ctx.globalAlpha = gf * 0.20;
           ctx.fillStyle = `rgb(${r},${g},${b})`;
-          ctx.beginPath(); ctx.arc(p.px, p.py, DOT_R*3.5, 0, Math.PI*2); ctx.fill();
-          // Core
-          ctx.globalAlpha = Math.min(1, baseAlpha + boost*0.5);
-          ctx.fillStyle = `rgb(${r},${g},${b})`;
-          ctx.beginPath(); ctx.arc(p.px, p.py, DOT_R*(1+boost*2), 0, Math.PI*2); ctx.fill();
-        } else if(isActive){
-          // Same metric, outside zone — still bright
-          ctx.globalAlpha = baseAlpha + 0.15;
-          ctx.fillStyle = `rgb(${p.r},${p.g},${p.b})`;
-          ctx.beginPath(); ctx.arc(p.px, p.py, DOT_R*1.4, 0, Math.PI*2); ctx.fill();
-        } else {
-          // Different metric — dim right down
-          ctx.globalAlpha = baseAlpha * 0.18;
-          ctx.fillStyle = `rgb(${p.r},${p.g},${p.b})`;
-          ctx.beginPath(); ctx.arc(p.px, p.py, DOT_R, 0, Math.PI*2); ctx.fill();
+          ctx.beginPath(); ctx.arc(p.px,p.py,DOT_R*4,0,Math.PI*2); ctx.fill();
         }
-      } else if(hovering && !p.metric){
-        // Teal base — dim when any metric is active
-        ctx.globalAlpha = activeMetric ? baseAlpha * 0.12 : baseAlpha;
+        ctx.globalAlpha = Math.min(1, baseAlpha + sep * 0.35);
+        ctx.fillStyle = `rgb(${r},${g},${b})`;
+        ctx.beginPath(); ctx.arc(p.px,p.py,DOT_R2,0,Math.PI*2); ctx.fill();
+      } else if(!p.metric){
+        ctx.globalAlpha = baseAlpha * (1 - sep * 0.7);
         ctx.fillStyle = `rgb(${p.r},${p.g},${p.b})`;
-        ctx.beginPath(); ctx.arc(p.px, p.py, DOT_R, 0, Math.PI*2); ctx.fill();
+        ctx.beginPath(); ctx.arc(p.px,p.py,DOT_R,0,Math.PI*2); ctx.fill();
       } else {
         ctx.globalAlpha = baseAlpha;
         ctx.fillStyle = `rgb(${p.r},${p.g},${p.b})`;
-        ctx.beginPath(); ctx.arc(p.px, p.py, DOT_R, 0, Math.PI*2); ctx.fill();
+        ctx.beginPath(); ctx.arc(p.px,p.py,DOT_R,0,Math.PI*2); ctx.fill();
       }
     }
     ctx.globalAlpha = 1;
+
+    // Draw cluster labels — appear in phase 2
+    if(sep > SPLIT){
+      const labelAlpha = Math.min(1, (sep - SPLIT) / (1-SPLIT));
+      ctx.save();
+      ctx.globalAlpha = labelAlpha;
+      MKEYS.forEach(key => {
+        if(!SEP_BASE[key]) return;
+        const lx = clusterScreenPos[key].x;
+        const ly = clusterScreenPos[key].y;
+        const col = MC[key];
+        const val = heroMetrics[key];
+
+        // Label name
+        ctx.font = `600 ${Math.round(scale*0.028)}px 'Share Tech Mono', monospace`;
+        ctx.fillStyle = col;
+        ctx.textAlign = 'center';
+        ctx.fillText(METRIC_LABELS[key].toUpperCase(), lx, ly - scale*0.13);
+
+        // Percentage
+        ctx.font = `${Math.round(scale*0.022)}px 'Share Tech Mono', monospace`;
+        ctx.fillStyle = 'rgba(255,255,255,0.55)';
+        ctx.fillText(`${val}%`, lx, ly - scale*0.09);
+      });
+      ctx.restore();
+    }
+
+    label.classList.remove('visible');
   }
   drawHero();
 })();
