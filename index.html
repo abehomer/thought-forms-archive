@@ -1,0 +1,1630 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>THOUGHT FORMS</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+/* ── Minimal GLB → Three.js parser ──────────────────
+   Handles GLB 2.0 binary format. Supports:
+   - Mesh geometry (positions, normals, UVs, indices)
+   - Vertex colors
+   - PBR materials (baseColorFactor, baseColorTexture)
+   - Embedded textures
+   Compatible with Three.js r128.
+──────────────────────────────────────────────────── */
+THREE.GLTFLoader = function(){};
+THREE.GLTFLoader.prototype.parse = function(arrayBuffer, path, onLoad, onError){
+  try {
+    const dv = new DataView(arrayBuffer);
+    // GLB header: magic 0x46546C67, version, length
+    if(dv.getUint32(0, true) !== 0x46546C67){
+      throw new Error('Not a GLB file');
+    }
+    // Chunk 0: JSON
+    const jsonLen = dv.getUint32(12, true);
+    const jsonBytes = new Uint8Array(arrayBuffer, 20, jsonLen);
+    const json = JSON.parse(new TextDecoder().decode(jsonBytes));
+    // Chunk 1: BIN
+    let binBuf = null;
+    const binOffset = 20 + jsonLen;
+    if(binOffset + 8 <= arrayBuffer.byteLength){
+      const binLen = dv.getUint32(binOffset, true);
+      binBuf = arrayBuffer.slice(binOffset + 8, binOffset + 8 + binLen);
+    }
+
+    function getAccessorData(acc){
+      const bv = json.bufferViews[acc.bufferView];
+      const offset = (bv.byteOffset||0) + (acc.byteOffset||0);
+      const count = acc.count;
+      const compMap = {5120:Int8Array,5121:Uint8Array,5122:Int16Array,5123:Uint16Array,5125:Uint32Array,5126:Float32Array};
+      const typeCount = {SCALAR:1,VEC2:2,VEC3:3,VEC4:4,MAT4:16};
+      const Ctor = compMap[acc.componentType];
+      const n = typeCount[acc.type];
+      return new Ctor(binBuf, offset, count * n);
+    }
+
+    // Build textures
+    const textures = [];
+    if(json.images && json.textures){
+      json.images.forEach((img, i) => {
+        const bv = json.bufferViews[img.bufferView];
+        const off = bv.byteOffset||0;
+        const blob = new Blob([new Uint8Array(binBuf, off, bv.byteLength)], {type: img.mimeType||'image/png'});
+        const url = URL.createObjectURL(blob);
+        const tex = new THREE.TextureLoader().load(url);
+        tex.flipY = false;
+        tex.encoding = THREE.sRGBEncoding;
+        textures.push(tex);
+      });
+    }
+
+    // Build materials
+    const materials = (json.materials||[]).map(mat => {
+      const pbr = mat.pbrMetallicRoughness || {};
+      const color = pbr.baseColorFactor || [1,1,1,1];
+      const params = {
+        color: new THREE.Color(color[0], color[1], color[2]),
+        metalness: pbr.metallicFactor !== undefined ? pbr.metallicFactor : 0,
+        roughness: pbr.roughnessFactor !== undefined ? pbr.roughnessFactor : 1,
+        transparent: mat.alphaMode === 'BLEND',
+        opacity: color[3],
+        side: mat.doubleSided ? THREE.DoubleSide : THREE.FrontSide,
+      };
+      if(pbr.baseColorTexture && textures[json.textures[pbr.baseColorTexture.index].source]){
+        params.map = textures[json.textures[pbr.baseColorTexture.index].source];
+        params.color = new THREE.Color(1,1,1);
+      }
+      return new THREE.MeshStandardMaterial(params);
+    });
+    if(!materials.length) materials.push(new THREE.MeshStandardMaterial({color:0x888888}));
+
+    // Build meshes
+    const group = new THREE.Group();
+    (json.nodes||[]).forEach(node => {
+      if(node.mesh === undefined) return;
+      const meshDef = json.meshes[node.mesh];
+      meshDef.primitives.forEach(prim => {
+        const geo = new THREE.BufferGeometry();
+        const attrs = prim.attributes;
+
+        if(attrs.POSITION !== undefined){
+          const pos = getAccessorData(json.accessors[attrs.POSITION]);
+          geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(pos), 3));
+        }
+        if(attrs.NORMAL !== undefined){
+          const nor = getAccessorData(json.accessors[attrs.NORMAL]);
+          geo.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(nor), 3));
+        }
+        if(attrs.TEXCOORD_0 !== undefined){
+          const uv = getAccessorData(json.accessors[attrs.TEXCOORD_0]);
+          geo.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(uv), 2));
+        }
+        if(attrs.COLOR_0 !== undefined){
+          const acc = json.accessors[attrs.COLOR_0];
+          const cd = getAccessorData(acc);
+          const n = acc.type === 'VEC4' ? 4 : 3;
+          geo.setAttribute('color', new THREE.BufferAttribute(new Float32Array(cd), n));
+        }
+        if(prim.indices !== undefined){
+          const idx = getAccessorData(json.accessors[prim.indices]);
+          geo.setIndex(new THREE.BufferAttribute(new Uint32Array(idx), 1));
+        }
+        if(!geo.attributes.normal) geo.computeVertexNormals();
+
+        const mat = materials[prim.material !== undefined ? prim.material : 0];
+        if(geo.attributes.color) mat.vertexColors = true;
+        const mesh = new THREE.Mesh(geo, mat);
+
+        if(node.matrix){
+          mesh.matrix.fromArray(node.matrix);
+          mesh.matrix.decompose(mesh.position, mesh.quaternion, mesh.scale);
+        } else {
+          if(node.translation) mesh.position.fromArray(node.translation);
+          if(node.rotation)    mesh.quaternion.fromArray(node.rotation);
+          if(node.scale)       mesh.scale.fromArray(node.scale);
+        }
+        group.add(mesh);
+      });
+    });
+
+    // If no nodes had meshes, try all meshes directly
+    if(!group.children.length){
+      (json.meshes||[]).forEach(meshDef => {
+        meshDef.primitives.forEach(prim => {
+          const geo = new THREE.BufferGeometry();
+          const attrs = prim.attributes;
+          if(attrs.POSITION !== undefined){
+            const pos = getAccessorData(json.accessors[attrs.POSITION]);
+            geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(pos), 3));
+          }
+          if(attrs.NORMAL !== undefined){
+            const nor = getAccessorData(json.accessors[attrs.NORMAL]);
+            geo.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(nor), 3));
+          }
+          if(attrs.TEXCOORD_0 !== undefined){
+            const uv = getAccessorData(json.accessors[attrs.TEXCOORD_0]);
+            geo.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(uv), 2));
+          }
+          if(attrs.COLOR_0 !== undefined){
+            const acc = json.accessors[attrs.COLOR_0];
+            const cd = getAccessorData(acc);
+            geo.setAttribute('color', new THREE.BufferAttribute(new Float32Array(cd), acc.type==='VEC4'?4:3));
+          }
+          if(prim.indices !== undefined){
+            const idx = getAccessorData(json.accessors[prim.indices]);
+            geo.setIndex(new THREE.BufferAttribute(new Uint32Array(idx), 1));
+          }
+          if(!geo.attributes.normal) geo.computeVertexNormals();
+          const mat = materials[prim.material !== undefined ? prim.material : 0];
+          if(geo.attributes.color) mat.vertexColors = true;
+          group.add(new THREE.Mesh(geo, mat));
+        });
+      });
+    }
+
+    onLoad({ scene: group });
+  } catch(e){
+    onError(e);
+  }
+};
+THREE.GLTFLoader.prototype.load = function(url, onLoad, onProgress, onError){
+  fetch(url)
+    .then(r=>r.arrayBuffer())
+    .then(buf=>this.parse(buf,'',onLoad,onError))
+    .catch(onError);
+};
+</script>
+<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=VT323&display=swap" rel="stylesheet">
+<style>
+:root {
+  --stress:     #ff00ff;
+  --interest:   #ff8800;
+  --engagement: #00aaff;
+  --excitement: #ffff00;
+  --attention:  #ff2222;
+  --relaxation: #00ccff;
+  --teal:       #008899;
+  --mono: 'Share Tech Mono', monospace;
+  --vt:   'VT323', monospace;
+}
+
+*, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
+html { scroll-behavior:smooth; }
+
+body {
+  background:#000;
+  color:#fff;
+  font-family:var(--mono);
+  overflow-x:hidden;
+  cursor:crosshair;
+}
+
+/* scanline overlay */
+body::before {
+  content:'';
+  position:fixed; inset:0;
+  background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,0.12) 2px,rgba(0,0,0,0.12) 4px);
+  pointer-events:none;
+  z-index:9000;
+}
+
+a { color:inherit; text-decoration:none; }
+
+/* ─── NAV ─────────────────────────────────── */
+nav {
+  position:fixed; top:0; left:0; right:0;
+  z-index:800;
+  height:50px;
+  background:#000;
+  border-bottom:1px solid rgba(255,255,255,0.1);
+  display:flex; align-items:center;
+  justify-content:space-between;
+  padding:0 24px;
+}
+
+.nav-brand {
+  display:flex; align-items:center; gap:12px;
+}
+.nav-title-top  { font-family:var(--vt); font-size:22px; letter-spacing:.1em; color:#fff; }
+.nav-ver        { font-family:var(--mono); font-size:10px; color:rgba(255,255,255,.58); }
+
+.nav-links {
+  display:flex; gap:24px;
+  font-family:var(--mono); font-size:10px;
+  letter-spacing:.18em; text-transform:uppercase;
+  color:rgba(255,255,255,.58);
+}
+.nav-links a { cursor:pointer; transition:color .15s; }
+.nav-links a:hover { color:#00ccff; }
+
+/* ─── HERO ────────────────────────────────── */
+#hero {
+  position:relative;
+  width:100%; height:100vh; min-height:680px;
+  background:#000;
+  overflow:hidden;
+}
+
+/* Main particle canvas — full bleed */
+#hero-canvas {
+  position:absolute; inset:0;
+  width:100%; height:100%;
+}
+
+/* Project title — bottom-left, minimal */
+.hero-title-block {
+  position:absolute;
+  bottom:40px; left:32px;
+  z-index:10;
+  pointer-events:none;
+}
+.hero-title-top {
+  font-family:var(--vt);
+  font-size:clamp(28px,4vw,48px);
+  letter-spacing:.12em;
+  color:#fff;
+  line-height:1;
+  margin-bottom:4px;
+}
+.hero-title-bot {
+  font-family:var(--vt);
+  font-size:clamp(24px,3.2vw,40px);
+  letter-spacing:.12em;
+  color:#00ccff;
+  line-height:1;
+}
+.hero-ver {
+  margin-top:10px;
+  font-family:var(--mono);
+  font-size:9px;
+  letter-spacing:.25em;
+  color:rgba(255,255,255,.55);
+  text-transform:uppercase;
+}
+
+/* Hero emotion label */
+.hero-label {
+  position:absolute; pointer-events:none; z-index:20;
+  display:none; transform:translate(-50%, -140%);
+  text-align:center;
+}
+.hero-label.visible { display:block; }
+.hl-dot {
+  width:10px; height:10px; border-radius:50%;
+  margin:0 auto 6px;
+  box-shadow:0 0 12px 4px currentColor;
+}
+.hl-name {
+  font-family:var(--vt); font-size:22px; letter-spacing:.14em;
+  text-transform:uppercase; line-height:1;
+  margin-bottom:3px;
+}
+.hl-sys {
+  font-family:var(--mono); font-size:10px; letter-spacing:.2em;
+  color:rgba(255,255,255,.45); text-transform:uppercase;
+}
+
+/* Hero emotion label */
+.hero-label {
+  position:absolute; pointer-events:none; z-index:20;
+  display:none; transform:translate(-50%, -140%);
+  text-align:center;
+}
+.hero-label.visible { display:block; }
+.hl-dot {
+  width:10px; height:10px; border-radius:50%;
+  margin:0 auto 6px;
+  box-shadow:0 0 12px 4px currentColor;
+}
+.hl-name {
+  font-family:var(--vt); font-size:22px; letter-spacing:.14em;
+  text-transform:uppercase; line-height:1; margin-bottom:3px;
+}
+.hl-sys {
+  font-family:var(--mono); font-size:10px; letter-spacing:.2em;
+  color:rgba(255,255,255,.45); text-transform:uppercase;
+}
+
+/* Scroll hint */
+.hero-scroll {
+  position:absolute; bottom:44px; right:32px;
+  display:flex; flex-direction:column; align-items:center; gap:6px;
+  font-family:var(--mono); font-size:9px;
+  letter-spacing:.22em; color:rgba(255,255,255,.48);
+  text-transform:uppercase; z-index:10;
+}
+.scroll-line { width:1px; height:36px; background:linear-gradient(to bottom,rgba(255,255,255,.2),transparent); }
+
+/* ─── SHARED SECTION STYLES ──────────────── */
+section { position:relative; }
+.section-inner { max-width:1200px; margin:0 auto; padding:80px 40px; }
+
+.sec-header { display:flex; align-items:flex-end; gap:18px; margin-bottom:44px; padding-bottom:10px; border-bottom:1px solid rgba(255,255,255,.1); }
+.sec-num { font-family:var(--vt); font-size:44px; color:rgba(255,255,255,.07); line-height:1; }
+.sec-sys { font-family:var(--mono); font-size:11px; letter-spacing:.3em; color:#00ccff; text-transform:uppercase; margin-bottom:4px; opacity:.65; }
+.sec-title { font-family:var(--vt); font-size:36px; color:#fff; letter-spacing:.1em; text-transform:uppercase; }
+.sec-title .c { color:#00ccff; }
+
+.body-text { font-family:var(--mono); font-size:14px; line-height:1.85; color:rgba(255,255,255,.70); max-width:660px; }
+.body-text p+p { margin-top:12px; }
+
+.divider { width:100%; height:1px; background:rgba(255,255,255,.07); }
+
+.fade-up { opacity:0; transform:translateY(24px); transition:opacity .7s,transform .7s; }
+.fade-up.visible { opacity:1; transform:translateY(0); }
+
+/* ─── ABOUT ──────────────────────────────── */
+#about { background:#000; }
+
+.about-grid { display:grid; grid-template-columns:1fr 1fr; gap:44px; }
+
+.td-panel { border:1px solid rgba(255,255,255,.15); background:#000; }
+.td-panel-hdr {
+  padding:7px 12px; border-bottom:1px solid rgba(255,255,255,.1);
+  font-family:var(--mono); font-size:10px; letter-spacing:.22em;
+  color:rgba(255,255,255,.62); text-transform:uppercase;
+  display:flex; align-items:center; gap:7px;
+}
+.td-panel-hdr::before { content:'●'; font-size:7px; color:#00ccff; }
+.td-panel-body { padding:16px 14px; }
+
+.quote-text { font-family:var(--vt); font-size:19px; line-height:1.55; color:rgba(255,255,255,.8); letter-spacing:.03em; margin-bottom:14px; }
+
+.pillars { display:flex; flex-direction:column; gap:2px; }
+.pillar {
+  display:flex; gap:12px; padding:12px 14px;
+  border:1px solid rgba(255,255,255,.07); background:#000;
+  transition:border-color .2s; position:relative; overflow:hidden;
+}
+.pillar:hover { border-color:rgba(0,200,255,.3); }
+.pillar::before { content:''; position:absolute; left:0; top:0; bottom:0; width:2px; background:#00ccff; transform:scaleY(0); transition:transform .2s; transform-origin:bottom; }
+.pillar:hover::before { transform:scaleY(1); }
+.pn { font-family:var(--vt); font-size:20px; color:rgba(0,200,255,.25); flex-shrink:0; line-height:1; padding-top:1px; }
+.pt { font-family:var(--mono); font-size:12px; letter-spacing:.12em; color:#fff; text-transform:uppercase; margin-bottom:4px; }
+.pb { font-size:13px; color:rgba(255,255,255,.65); line-height:1.62; }
+
+/* ─── PROCESS ────────────────────────────── */
+#process { background:#040406; }
+
+.pipeline { display:flex; align-items:center; justify-content:center; overflow-x:auto; padding-bottom:6px; margin:36px 0 32px; }
+.ps { display:flex; flex-direction:column; align-items:center; flex-shrink:0; min-width:100px; padding-top:10px; }
+.ps-icon { width:90px; height:90px; border:1px solid rgba(255,255,255,.18); background:#000; display:flex; align-items:center; justify-content:center; font-size:38px; margin-bottom:9px; position:relative; transition:border-color .2s; overflow:visible; }
+.ps:hover .ps-icon { border-color:#00ccff; box-shadow:0 0 10px rgba(0,200,255,.25); }
+.ps-n { position:absolute; top:-8px; right:-8px; font-family:var(--mono); font-size:8px; background:#00ccff; color:#000; padding:1px 4px; z-index:1; }
+.ps-lbl { font-family:var(--mono); font-size:11px; letter-spacing:.1em; text-transform:uppercase; color:rgba(255,255,255,.58); text-align:center; max-width:86px; line-height:1.4; }
+.pa { color:rgba(255,255,255,.18); font-size:13px; flex-shrink:0; padding:0 2px; margin-bottom:20px; padding-top:10px; }
+
+.proc-cards { display:grid; grid-template-columns:repeat(3,1fr); gap:2px; }
+.pc { padding:18px; border:1px solid rgba(255,255,255,.09); background:#000; }
+.pc-sys { font-family:var(--mono); font-size:11px; letter-spacing:.28em; color:#00ccff; text-transform:uppercase; margin-bottom:7px; opacity:.55; }
+.pc-title { font-family:var(--vt); font-size:22px; color:#fff; letter-spacing:.07em; margin-bottom:9px; text-transform:uppercase; }
+.pc p { font-size:13px; color:rgba(255,255,255,.65); line-height:1.68; }
+
+/* ─── ARCHIVE ────────────────────────────── */
+#archive { background:#000; }
+
+.arch-bar { display:flex; align-items:center; justify-content:space-between; padding:7px 11px; border:1px solid rgba(255,255,255,.1); margin-bottom:2px; font-family:var(--mono); font-size:11px; letter-spacing:.14em; color:rgba(255,255,255,.55); text-transform:uppercase; }
+.adot { width:6px; height:6px; border-radius:50%; background:#00ff44; box-shadow:0 0 5px #00ff44; animation:blink 2s infinite; }
+@keyframes blink { 0%,100%{opacity:1}50%{opacity:.15} }
+
+.frow { display:flex; gap:2px; margin-bottom:2px; flex-wrap:wrap; }
+.fbtn { padding:5px 13px; border:1px solid rgba(255,255,255,.1); background:#000; font-family:var(--mono); font-size:11px; letter-spacing:.14em; text-transform:uppercase; color:rgba(255,255,255,.55); cursor:pointer; transition:all .15s; }
+.fbtn:hover,.fbtn.active { border-color:#00ccff; color:#00ccff; background:rgba(0,200,255,.04); }
+
+.sgrid { display:grid; grid-template-columns:repeat(auto-fill,minmax(360px,1fr)); gap:2px; }
+
+.scard {
+  background:#000; border:1px solid rgba(255,255,255,.09);
+  cursor:pointer; overflow:hidden; transition:border-color .2s; position:relative;
+}
+.scard:hover { border-color:rgba(255,255,255,.55); }
+.scard::before,.scard::after { content:''; position:absolute; width:9px; height:9px; pointer-events:none; z-index:4; }
+.scard::before { top:0;left:0; border-top:1px solid rgba(0,200,255,.45); border-left:1px solid rgba(0,200,255,.45); }
+.scard::after  { bottom:0;right:0; border-bottom:1px solid rgba(0,200,255,.45); border-right:1px solid rgba(0,200,255,.45); }
+
+/* 2D canvas particle preview — key new element */
+.scard-preview {
+  width:100%; height:220px;
+  position:relative; background:#000; overflow:hidden;
+}
+.scard-preview canvas { position:absolute; inset:0; width:100%!important; height:100%!important; }
+.scard-preview::after {
+  content:''; position:absolute; inset:0;
+  background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,0.1) 2px,rgba(0,0,0,0.1) 4px);
+  pointer-events:none; z-index:3;
+}
+
+.card-hud { position:absolute; inset:0; pointer-events:none; z-index:5; }
+.chud-tl { position:absolute; top:7px; left:9px; font-family:var(--mono); font-size:11px; color:rgba(255,255,255,.65); letter-spacing:.1em; }
+.chud-tr { position:absolute; top:7px; right:9px; font-family:var(--mono); font-size:11px; color:rgba(255,255,255,.50); }
+
+/* Colour bar strip */
+.card-bar { position:absolute; bottom:0; left:0; right:0; height:3px; display:flex; z-index:5; }
+.cb-seg { height:100%; }
+
+.scard-info { padding:12px 14px 15px; border-top:1px solid rgba(255,255,255,.07); }
+.sc-id    { font-family:var(--mono); font-size:11px; letter-spacing:.18em; color:rgba(255,255,255,.50); text-transform:uppercase; margin-bottom:3px; }
+.sc-name  { font-family:var(--vt); font-size:24px; color:#fff; letter-spacing:.08em; text-transform:uppercase; margin-bottom:5px; }
+.sc-prompt{ font-size:12px; color:rgba(255,255,255,.58); line-height:1.5; margin-bottom:9px; font-style:italic; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden; }
+.sc-pills  { display:flex; gap:5px; flex-wrap:wrap; }
+
+.spill { display:flex; align-items:center; gap:4px; padding:2px 7px; border:1px solid; font-family:var(--mono); font-size:11px; letter-spacing:.07em; text-transform:uppercase; }
+.spill.stress     { color:var(--stress);     border-color:rgba(255,0,255,.28);   background:rgba(255,0,255,.04); }
+.spill.interest   { color:var(--interest);   border-color:rgba(255,136,0,.28);   background:rgba(255,136,0,.04); }
+.spill.engagement { color:var(--engagement); border-color:rgba(0,170,255,.28);   background:rgba(0,170,255,.04); }
+.spill.excitement { color:var(--excitement); border-color:rgba(255,255,0,.28);   background:rgba(255,255,0,.04); }
+.spill.attention  { color:var(--attention);  border-color:rgba(255,34,34,.28);   background:rgba(255,34,34,.04); }
+.spill.relaxation { color:var(--relaxation); border-color:rgba(0,204,255,.28);   background:rgba(0,204,255,.04); }
+.spill-dot { width:4px; height:4px; border-radius:50%; background:currentColor; box-shadow:0 0 3px currentColor; }
+
+/* ─── MODAL ──────────────────────────────── */
+.moverlay {
+  position:fixed; inset:0; background:rgba(0,0,0,.94);
+  z-index:1000; display:flex; align-items:center; justify-content:center;
+  padding:20px; opacity:0; pointer-events:none; transition:opacity .3s;
+  backdrop-filter:blur(3px);
+}
+.moverlay.open { opacity:1; pointer-events:all; }
+
+.modal {
+  background:#000; border:1px solid rgba(255,255,255,.2);
+  width:100%; max-width:1100px; max-height:90vh;
+  display:grid; grid-template-columns:1fr 1fr;
+  overflow:hidden; position:relative;
+  transform:translateY(14px); transition:transform .3s;
+}
+.modal::before,.modal::after { content:''; position:absolute; width:14px; height:14px; pointer-events:none; z-index:6; }
+.modal::before { top:0;left:0; border-top:2px solid #00ccff; border-left:2px solid #00ccff; }
+.modal::after  { bottom:0;right:0; border-bottom:2px solid #00ccff; border-right:2px solid #00ccff; }
+.moverlay.open .modal { transform:translateY(0); }
+
+.m-canvas-wrap {
+  position:relative; background:#000;
+  min-height:480px; border-right:1px solid rgba(255,255,255,.09); overflow:hidden;
+}
+/* 2D canvas fills it */
+.m-canvas-wrap canvas { position:absolute; inset:0; width:100%!important; height:100%!important; }
+.m-canvas-wrap::after {
+  content:''; position:absolute; inset:0;
+  background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,.1) 2px,rgba(0,0,0,.1) 4px);
+  pointer-events:none; z-index:3;
+}
+
+.m-hud { position:absolute; inset:0; pointer-events:none; z-index:4; }
+.mhud-sys  { position:absolute; top:9px; left:11px; font-family:var(--mono); font-size:11px; color:rgba(255,255,255,.55); letter-spacing:.1em; text-transform:uppercase; }
+.mhud-id   { position:absolute; top:9px; right:11px; font-family:var(--mono); font-size:11px; color:rgba(0,200,255,.45); }
+.mhud-drag { position:absolute; bottom:52px; left:50%; transform:translateX(-50%); font-family:var(--mono); font-size:9px; color:rgba(255,255,255,.18); letter-spacing:.14em; text-transform:uppercase; }
+
+/* mini wave inside modal viewer */
+.m-wave { position:absolute; bottom:0; left:0; right:0; height:44px; z-index:4; }
+.m-wave canvas { width:100%!important; height:100%!important; }
+
+.m-close { position:fixed; top:26px; right:26px; width:32px; height:32px; background:#000; border:1px solid rgba(255,255,255,.2); color:#fff; font-family:var(--mono); font-size:12px; cursor:pointer; display:flex; align-items:center; justify-content:center; z-index:1002; transition:all .15s; }
+.m-close:hover { border-color:#ff2244; color:#ff2244; }
+
+.m-body { overflow-y:auto; padding:26px 24px; max-height:90vh; scrollbar-width:thin; scrollbar-color:rgba(255,255,255,.08) transparent; }
+
+.m-sys-bar { display:flex; align-items:center; gap:7px; padding:5px 9px; border:1px solid rgba(255,255,255,.09); margin-bottom:14px; font-family:var(--mono); font-size:11px; letter-spacing:.14em; color:rgba(255,255,255,.55); }
+.m-id    { font-family:var(--mono); font-size:11px; letter-spacing:.24em; color:#00ccff; text-transform:uppercase; margin-bottom:4px; opacity:.6; }
+.m-title { font-family:var(--vt); font-size:34px; color:#fff; letter-spacing:.09em; text-transform:uppercase; margin-bottom:4px; }
+.m-date  { font-family:var(--mono); font-size:12px; color:rgba(255,255,255,.50); margin-bottom:16px; }
+
+.m-prompt-wrap { border:1px solid rgba(255,255,255,.09); padding:11px 12px; margin-bottom:16px; }
+.m-prompt-wrap::before { content:'STIMULUS_PROMPT'; display:block; font-size:11px; color:#00ccff; letter-spacing:.22em; margin-bottom:6px; opacity:.45; }
+.m-prompt { font-size:14px; color:rgba(255,255,255,.78); line-height:1.7; font-style:italic; }
+
+.m-desc { font-size:13px; color:rgba(255,255,255,.65); line-height:1.78; margin-bottom:18px; }
+.m-sec-lbl { font-family:var(--mono); font-size:11px; letter-spacing:.24em; color:rgba(255,255,255,.55); text-transform:uppercase; border-bottom:1px solid rgba(255,255,255,.07); padding-bottom:5px; margin-bottom:10px; }
+
+/* TD-style metric readout in modal */
+.m-metric-panel { border:1px solid rgba(255,255,255,.1); padding:11px 13px; margin-bottom:16px; background:#000; }
+.mm-row { display:flex; align-items:center; justify-content:space-between; margin-bottom:7px; }
+.mm-row:last-child { margin-bottom:0; }
+.mm-left { display:flex; align-items:center; gap:8px; }
+.mm-ring { width:15px; height:15px; border-radius:50%; border:2px solid; background:transparent; flex-shrink:0; }
+.mm-label { font-family:var(--mono); font-size:12px; letter-spacing:.1em; color:rgba(255,255,255,.70); text-transform:uppercase; }
+.mm-bar-bg { flex:1; height:2px; background:rgba(255,255,255,.06); margin:0 10px; }
+.mm-bar-fill { height:100%; transition:width 1s ease; }
+.mm-val { font-family:var(--vt); font-size:28px; line-height:1; min-width:44px; text-align:right; }
+
+.m-interp { padding:11px 13px; border:1px solid rgba(255,255,255,.07); font-size:13px; color:rgba(255,255,255,.60); line-height:1.78; font-style:italic; }
+.m-interp::before { content:'// ANALYST_NOTE'; display:block; font-family:var(--mono); font-size:9px; color:rgba(255,136,0,.55); letter-spacing:.18em; margin-bottom:5px; font-style:normal; }
+
+/* Color map panel in modal */
+.m-colormap-wrap { margin-bottom:16px; }
+.m-colormap-wrap .m-sec-lbl { margin-bottom:8px; }
+.m-colormap-img {
+  width:100%; aspect-ratio:1/1;
+  border:1px solid rgba(255,255,255,.09);
+  display:block; object-fit:cover;
+  image-rendering:pixelated;
+  filter:saturate(1.1);
+}
+.m-colormap-caption { font-family:var(--mono); font-size:11px; color:rgba(255,255,255,.48); letter-spacing:.1em; padding:5px 0 0; }
+
+/* Color map thumbnail on archive card */
+.cm-thumb {
+  position:absolute; bottom:3px; right:8px;
+  width:36px; height:36px; z-index:5;
+  border:1px solid rgba(255,255,255,.18);
+  object-fit:cover; image-rendering:pixelated;
+  opacity:0.75; transition:opacity .2s;
+}
+.scard:hover .cm-thumb { opacity:1; }
+
+footer { padding:16px 40px; border-top:1px solid rgba(255,255,255,.07); display:flex; justify-content:space-between; align-items:center; font-family:var(--mono); font-size:11px; letter-spacing:.1em; color:rgba(255,255,255,.18); background:#000; }
+
+@media(max-width:768px){
+  nav { padding:0 14px; }
+  .nav-links { display:none; }
+  .section-inner { padding:52px 18px; }
+  .about-grid { grid-template-columns:1fr; gap:20px; }
+  .proc-cards { grid-template-columns:1fr; }
+  .modal { grid-template-columns:1fr; }
+  .m-canvas-wrap { min-height:260px; }
+  footer { flex-direction:column; gap:6px; }
+  .hero-title-block { left:20px; bottom:28px; }
+}
+</style>
+</head>
+<body>
+
+<!-- NAV -->
+<nav>
+  <div class="nav-brand">
+    <svg width="44" height="44" viewBox="0 0 44 44" fill="none">
+      <rect x="8" y="8" width="20" height="20" fill="none" stroke="white" stroke-width="1.1" opacity=".85"/>
+      <rect x="16" y="16" width="20" height="20" fill="none" stroke="white" stroke-width="1.1" opacity=".85"/>
+      <line x1="8" y1="8"  x2="16" y2="16" stroke="white" stroke-width="1.1" opacity=".85"/>
+      <line x1="28" y1="8"  x2="36" y2="16" stroke="white" stroke-width="1.1" opacity=".85"/>
+      <line x1="8" y1="28" x2="16" y2="36" stroke="white" stroke-width="1.1" opacity=".85"/>
+      <line x1="28" y1="28" x2="36" y2="36" stroke="white" stroke-width="1.1" opacity=".85"/>
+      <line x1="18" y1="18" x2="26" y2="26" stroke="#00ccff" stroke-width=".8" opacity=".5"/>
+      <line x1="26" y1="18" x2="18" y2="26" stroke="#00ccff" stroke-width=".8" opacity=".5"/>
+    </svg>
+    <div>
+      <div class="nav-title-top">THOUGHT FORMS</div>
+    </div>
+  </div>
+  <div style="display:flex;align-items:center;gap:16px;">
+    <span class="nav-ver">v3.2</span>
+    <div class="nav-links">
+      <a onclick="sTo('about')">About</a>
+      <a onclick="sTo('process')">Process</a>
+      <a onclick="sTo('archive')">Archive</a>
+    </div>
+  </div>
+</nav>
+
+<!-- HERO — particle graphic + project name only -->
+<section id="hero">
+  <canvas id="hero-canvas"></canvas>
+
+  <div class="hero-label" id="hero-label">
+    <div class="hl-dot" id="hl-dot"></div>
+    <div class="hl-name" id="hl-name"></div>
+    <div class="hl-sys" id="hl-sys"></div>
+  </div>
+  <div class="hero-title-block">
+    <div class="hero-title-top">THOUGHT FORMS</div>
+    <div class="hero-ver">v3.2 · EEG × PARTICLE_AGG × ARCHIVE · ABRAHAM HOMER</div>
+  </div>
+
+  <div class="hero-scroll">
+    <div class="scroll-line"></div>
+    <span>scroll</span>
+  </div>
+</section>
+
+<!-- ABOUT -->
+<section id="about">
+  <div class="section-inner">
+    <div class="sec-header fade-up">
+      <div class="sec-num">01</div>
+      <div><div class="sec-sys">// SYSTEM_OVERVIEW</div><div class="sec-title">MATERIALIZING THE <span class="c">INNER SIGNAL</span></div></div>
+    </div>
+    <div class="about-grid fade-up">
+      <div>
+        <div class="td-panel" style="margin-bottom:20px;">
+          <div class="td-panel-hdr">ARCHIVE_STATEMENT.LOG</div>
+          <div class="td-panel-body">
+            <div class="body-text">
+              <p>Thought Forms is a brain–computer interface (BCI) project that translates human brain activity into dynamic, generative visual forms. Developed in TouchDesigner, the system uses a particle aggregation algorithm that responds in real time to EEG data collected from a wearable headset. Variations in brainwave signals associated with emotional and cognitive states such as stress, attention, engagement, and excitement directly influence the behavior, density, and structure of the evolving form.</p>
+              <p>The resulting visualization functions as a quantifiable, externalized representation of internal mental states, allowing users to see otherwise invisible patterns of emotion and cognition. Beyond visualization, these forms can be captured and 3D printed, transforming ephemeral brain activity into tangible artifacts. In therapeutic and reflective contexts, Thought Forms offers a novel tool for mental health therapies, biofeedback, and self-awareness, enabling users and clinicians to track emotional states over time through both digital and physical outputs.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="pillars">
+        <div class="pillar"><div class="pn">01</div><div><div class="pt">EEG Signal Capture</div><div class="pb">Wearable EEG headsets translate brainwave activity into measurable emotional metrics in real time: stress, interest, engagement, excitement, attention, relaxation.</div></div></div>
+        <div class="pillar"><div class="pn">02</div><div><div class="pt">Particle Aggregation</div><div class="pb">Emotional metrics drive particle simulations. Each value modulates force fields, density, velocity, and clustering behavior, creating a unique generative form.</div></div></div>
+        <div class="pillar"><div class="pn">03</div><div><div class="pt">Material Artifact</div><div class="pb">Particle clouds are captured as 3D models and in select cases 3D printed, transforming ephemeral cognitive states into tangible, archivable objects.</div></div></div>
+        <div class="pillar"><div class="pn">04</div><div><div class="pt">Living Archive</div><div class="pb">This interface serves as a digital reliquary; a permanent home for each thought form, with the emotional data and narrative context of its creation.</div></div></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="divider"></div>
+
+<!-- PROCESS -->
+<section id="process">
+  <div class="section-inner">
+    <div class="sec-header fade-up"><div class="sec-num">02</div><div><div class="sec-sys">// PIPELINE_OVERVIEW</div><div class="sec-title">SIGNAL TO <span class="c">FORM</span></div></div></div>
+    <div class="pipeline fade-up">
+      <div class="ps"><div class="ps-icon">🧠<span class="ps-n">01</span></div><div class="ps-lbl">Stimulus Input</div></div><div class="pa">→</div>
+      <div class="ps"><div class="ps-icon">〰<span class="ps-n">02</span></div><div class="ps-lbl">EEG Capture</div></div><div class="pa">→</div>
+      <div class="ps"><div class="ps-icon">📊<span class="ps-n">03</span></div><div class="ps-lbl">Metric Extract</div></div><div class="pa">→</div>
+      <div class="ps"><div class="ps-icon">✦<span class="ps-n">04</span></div><div class="ps-lbl">Particle Sim</div></div><div class="pa">→</div>
+      <div class="ps"><div class="ps-icon">◈<span class="ps-n">05</span></div><div class="ps-lbl">3D Capture</div></div><div class="pa">→</div>
+      <div class="ps"><div class="ps-icon">🗂<span class="ps-n">06</span></div><div class="ps-lbl">Archive Entry</div></div>
+    </div>
+    <div class="proc-cards fade-up">
+      <div class="pc"><div class="pc-sys">INPUT_LAYER</div><div class="pc-title">EEG & Metrics</div><p>A wearable EEG device continuously streams brainwave data. An SDK outputs six emotional indices — each normalized to 0–100 — sampled multiple times per second.</p></div>
+      <div class="pc"><div class="pc-sys">GENERATIVE_LAYER</div><div class="pc-title">Particle Engine</div><p>Emotional output metrics map to particle system parameters in real time. Each emotion drives a corresponding color and density output, resulting in a unique aggregate form.</p></div>
+      <div class="pc"><div class="pc-sys">OUTPUT_LAYER</div><div class="pc-title">3D Capture & Print</div><p>When a resonant configuration emerges it is frozen and exported as a mesh. Select specimens are prepared for 3D printing — physical artifacts of the cognitive state.</p></div>
+    </div>
+  </div>
+</section>
+
+<div class="divider"></div>
+
+<!-- ARCHIVE -->
+<section id="archive">
+  <div class="section-inner">
+    <div class="sec-header fade-up"><div class="sec-num">03</div><div><div class="sec-sys">// SPECIMEN_DATABASE</div><div class="sec-title">THE <span class="c">COLLECTION</span></div></div></div>
+    <div class="arch-bar fade-up"><div style="display:flex;align-items:center;gap:8px;"><div class="adot"></div><span id="arch-count">ARCHIVE_ONLINE · 6 SPECIMENS INDEXED</span></div><div>v3.2</div></div>
+    <div class="frow fade-up" id="frow">
+      <button class="fbtn active" data-f="all">ALL</button>
+      <button class="fbtn" data-f="stress">STRESS</button>
+      <button class="fbtn" data-f="interest">INTEREST</button>
+      <button class="fbtn" data-f="engagement">ENGAGEMENT</button>
+      <button class="fbtn" data-f="excitement">EXCITEMENT</button>
+      <button class="fbtn" data-f="attention">ATTENTION</button>
+      <button class="fbtn" data-f="relaxation">RELAXATION</button>
+    </div>
+    <div class="sgrid fade-up" id="sgrid"></div>
+  </div>
+</section>
+
+<footer>
+  <div>THOUGHT FORMS © 2025 · <span style="color:rgba(255,255,255,.70)">ABRAHAM HOMER</span> · EEG × PARTICLE_AGG × ARCHIVE</div>
+  <div style="display:flex;gap:18px;"><span style="color:#00ff44">SYS_ONLINE</span></div>
+</footer>
+
+<!-- MODAL -->
+<div class="moverlay" id="moverlay">
+  <button class="m-close" id="m-close">[X]</button>
+  <div class="modal" id="modal">
+    <div class="m-canvas-wrap" id="m-canvas-wrap">
+      <div class="m-hud">
+        <div class="mhud-sys">INTERACTIVE · v3.2</div>
+        <div class="mhud-id" id="mhud-id">—</div>
+        <div class="mhud-drag">DRAG TO ROTATE</div>
+      </div>
+      <div class="m-wave"><canvas id="m-wave-canvas"></canvas></div>
+    </div>
+    <div class="m-body" id="m-body"></div>
+  </div>
+</div>
+
+<script>
+/* ═══════════════════════════════════════════════════
+   METRIC COLOURS — exact TD palette
+═══════════════════════════════════════════════════ */
+const MC = {
+  stress:     '#ff00ff',
+  interest:   '#ff8800',
+  engagement: '#00aaff',
+  excitement: '#ffff00',
+  attention:  '#ff3333',
+  relaxation: '#00ccff',
+};
+const MKEYS = Object.keys(MC);
+
+/* ═══════════════════════════════════════════════════
+   SPECIMEN DATA
+═══════════════════════════════════════════════════ */
+const SPECIMENS = [
+  { id:'TF-001', title:'Liminal Weight', dominant:'stress',
+    prompt:'What do you carry that has no name?',
+    description:'Generated during extended unfocused rumination. Low attention paired with high stress.',
+    interpretation:'The form suggests something like held grief: organized enough to have weight, chaotic enough to resist resolution. The tight nucleus is surrounded by a halo of dispersed fragments.',
+    date:'2025-01-14', metrics:{stress:81,interest:44,engagement:44,excitement:19,attention:28,relaxation:22} },
+  { id:'TF-002', title:'Aperture', dominant:'engagement',
+    prompt:'Describe the moment before understanding arrives.',
+    description:'Captured at the threshold of cognitive insight. Heightened attention and engagement, minimal stress.',
+    interpretation:'A widening, open structure. Particles trace outward arcs as if radiating from a central revelation. The form has a quality of expansion.',
+    date:'2025-01-28', metrics:{stress:12,interest:80,engagement:91,excitement:67,attention:88,relaxation:74} },
+  { id:'TF-003', title:'Empathy', dominant:'engagement',
+    colorMap:'https://abehomer.github.io/thought-forms/assets/meshy_ai_empathy_texture.webp',
+    glb:'https://abehomer.github.io/thought-forms/assets/meshy_ai_empathy_0309215831_texture.glb',
+    glb:'https://abehomer.github.io/thought-forms/assets/meshy_ai_empathy_0309215831_texture.glb',
+    prompt:'What sensation do you return to involuntarily?',
+    description:'High engagement and interest with elevated stress; the session showed sustained cognitive presence and emotional attunement.',
+    date:'2025-02-03', metrics:{stress:72,interest:81,engagement:88,excitement:34,attention:76,relaxation:22} },
+  { id:'TF-004', title:'Happiness', dominant:'excitement',
+    colorMap:'https://abehomer.github.io/thought-forms/assets/texture_0_1.webp',
+    glb:'https://abehomer.github.io/thought-forms/assets/meshy_ai_chromatic_landmass_0309202400_texture.glb',
+    glb:'https://abehomer.github.io/thought-forms/assets/meshy_ai_chromatic_landmass_0309202400_texture.glb',
+    prompt:'Where does your mind settle when nothing is asked of it?',
+    description:'The highest excitement index in the archive. High engagement and interest sustained throughout the session.',
+    date:'2025-02-17', metrics:{stress:29,interest:59,engagement:71,excitement:95,attention:61,relaxation:24} },
+  { id:'TF-005', title:'Amazement', dominant:'engagement',
+    colorMap:'https://abehomer.github.io/thought-forms/assets/tyler_s_amazement.webp's%20amazement.webp',
+    glb:'https://abehomer.github.io/thought-forms/assets/meshy_ai_thought_form_0309194329_texture.glb',
+    glb:'https://abehomer.github.io/thought-forms/assets/meshy_ai_thought_form_0309194329_texture.glb',
+    prompt:'Think of two things you believe simultaneously that cannot both be true.',
+    description:'High engagement and interest with moderate stress; a wide-ranging, expansive session.',
+    date:'2025-02-24', metrics:{stress:58,interest:66,engagement:75,excitement:33,attention:55,relaxation:29} },
+  { id:'TF-006', title:'Humor', dominant:'stress',
+    colorMap:'https://abehomer.github.io/thought-forms/assets/texture_0_humor.webp',
+    glb:'https://abehomer.github.io/thought-forms/assets/meshy_ai_vibrant_iberian_mosai_0309185147_texture.glb',
+    glb:'https://abehomer.github.io/thought-forms/assets/meshy_ai_vibrant_iberian_mosai_0309185147_texture.glb',
+    prompt:'What thought are you finished with but cannot release?',
+    description:'High stress alongside strong relaxation and excitement; an unusual combination that produced an energetic, diffuse form.',
+    date:'2025-03-05', metrics:{stress:84,interest:56,engagement:51,excitement:64,attention:25,relaxation:69} },
+  { id:'TF-007', title:'Vulnerability', dominant:'engagement',
+    colorMap:'https://abehomer.github.io/thought-forms/assets/talia_s_vulnerability.webp's%20vulnerability.webp',
+    glb:'https://abehomer.github.io/thought-forms/assets/meshy_ai_celestial_cascade_0309175350_texture.glb',
+    prompt:'What truth feels risky to say out loud?',
+    description:'Captured during a session of sustained emotional exposure. High engagement paired with interest; the subject was present and open, not retreating.',
+    interpretation:'Unlike most high-stress specimens, this form reaches outward. The structure is open, almost offering itself. Vulnerability rendered not as wound but as gesture.',
+    date:'2026-03-09', metrics:{stress:45,interest:56,engagement:66,excitement:29,attention:40,relaxation:32} },
+];
+
+/* ═══════════════════════════════════════════════════
+   CORE: 2D CANVAS PARTICLE CLOUD RENDERER
+   This is the main visual — faithfully recreating
+   the TD particle aggregation aesthetic:
+
+   • Thousands of small uniform dot particles
+   • Predominantly teal/blue-teal spherical mass
+   • Each metric has its own color cluster
+   • High-value metrics = denser inner clusters
+   • Stress/attention = tight central blob
+   • Tendrils extend outward from sphere surface
+   • Particles drift slowly when live
+   • Grey sphere ghost in background (as in TD)
+═══════════════════════════════════════════════════ */
+
+function hexToRgb(hex){
+  return [parseInt(hex.slice(1,3),16), parseInt(hex.slice(3,5),16), parseInt(hex.slice(5,7),16)];
+}
+
+/* gaussian sample via Box-Muller */
+function gauss(){ 
+  let u=0,v=0;
+  while(!u) u=Math.random();
+  while(!v) v=Math.random();
+  return Math.sqrt(-2*Math.log(u))*Math.cos(2*Math.PI*v);
+}
+
+/* ═══════════════════════════════════════════════════
+   BUILD PARTICLE DATA
+
+   Closely replicates what we see in the TD reference:
+
+   IMAGE 1 anatomy (stress=70, engagement=88, attention=55):
+     • An enormous dense TEAL sphere — thousands of
+       small uniform dots packed tightly. The sphere
+       reads almost as a solid mass with a rough/bumpy
+       surface edge (particles don't sit on a clean shell,
+       they fill the full volume uniformly).
+     • A large RED/ATTENTION dense blob sits near the
+       lower-center of the sphere — clearly distinct.
+     • Scattered ORANGE/INTEREST dots mixed through.
+     • Very few yellow, cyan — low-value metrics barely show.
+     • The cloud extends OUTSIDE the sphere boundary
+       in several places — irregular lumpy silhouette.
+
+   IMAGE 2 anatomy (more balanced, lower stress):
+     • Less dominant teal — more color visible throughout.
+     • LONG DRAMATIC TENDRILS: streams of colored dots
+       flowing far outside the sphere — downward, sideways.
+       These look like particle streams/trails, not blobs.
+     • The overall shape is very asymmetric and organic.
+
+   Rules:
+   - Sphere: uniform volume fill with cube-root sampling
+   - Clusters: tight gaussian blobs, size = f(metric value)  
+   - Tendrils: exponentially-distributed along outward ray,
+     very narrow (tight cone), sparse near tip
+   - ALL particles exactly the same draw size (no depth scale)
+═══════════════════════════════════════════════════ */
+function buildParticleData(metrics, N=5000){
+  const pts = [];
+
+  // ── TEAL BASE SPHERE ──────────────────────────
+  // 65% of all particles. Dense, fills sphere volume.
+  // Slightly lumpy edge: max radius has small noise.
+  const tN = Math.floor(N * 0.65);
+  for(let i=0; i<tN; i++){
+    // Uniform sphere volume sampling
+    const cosP = 2*Math.random()-1;
+    const sinP = Math.sqrt(1-cosP*cosP);
+    const th   = 2*Math.PI*Math.random();
+    // cube-root gives uniform volume density
+    const maxR = 0.88 + Math.random()*0.10; // slight lumpiness
+    const r    = Math.pow(Math.random(), 0.333) * maxR;
+    pts.push({
+      x: r*sinP*Math.cos(th),
+      y: r*sinP*Math.sin(th),
+      z: r*cosP,
+      r: Math.floor(Math.random()*18),
+      g: Math.floor(115+Math.random()*60),
+      b: Math.floor(150+Math.random()*70),
+    });
+  }
+
+  // ── METRIC CLUSTERS + TENDRILS ────────────────
+  // Fixed cluster positions (matching TD layout roughly):
+  //   stress     → lower-center (negative y)
+  //   attention  → lower-right of center
+  //   engagement → upper area
+  //   interest   → mid-right
+  //   excitement → upper-left
+  //   relaxation → mid-left
+  const ANCHORS = {
+    stress:     { ax:  0.05, ay: -0.30, az:  0.10 },
+    attention:  { ax:  0.25, ay: -0.20, az: -0.05 },
+    engagement: { ax: -0.10, ay:  0.15, az:  0.20 },
+    interest:   { ax:  0.30, ay:  0.10, az: -0.15 },
+    excitement: { ax: -0.25, ay:  0.20, az:  0.10 },
+    relaxation: { ax: -0.20, ay: -0.05, az: -0.20 },
+  };
+
+  // Tendril directions — each metric streams outward
+  // in a visually distinct direction, like in image 2
+  const TENDRIL_DIR = {
+    stress:     { dx:  0.0,  dy: -1.0,  dz:  0.1  }, // straight down
+    attention:  { dx:  0.7,  dy: -0.5,  dz:  0.0  }, // down-right
+    engagement: { dx: -0.3,  dy:  0.8,  dz:  0.4  }, // up
+    interest:   { dx:  0.8,  dy:  0.2,  dz: -0.3  }, // right
+    excitement: { dx: -0.6,  dy:  0.6,  dz:  0.2  }, // up-left
+    relaxation: { dx: -0.7,  dy: -0.3,  dz: -0.3  }, // left-down
+  };
+
+  const metSum = Object.values(metrics).reduce((a,b)=>a+b, 0);
+
+  Object.keys(metrics).forEach(key => {
+    const val  = metrics[key];
+    const frac = val / metSum;
+    const [cr,cg,cb] = hexToRgb(MC[key]);
+    const a = ANCHORS[key];
+    const td = TENDRIL_DIR[key];
+
+    // Normalise tendril direction
+    const tl = Math.sqrt(td.dx*td.dx + td.dy*td.dy + td.dz*td.dz);
+    const ndx=td.dx/tl, ndy=td.dy/tl, ndz=td.dz/tl;
+
+    // ── Cluster blob ──
+    // Tight gaussian. Radius scales with metric value.
+    // High value → larger, more visible blob.
+    const cN     = Math.floor(frac * N * 0.26);
+    const spread = 0.04 + (val/100) * 0.13;
+    for(let i=0; i<cN; i++){
+      pts.push({
+        x: a.ax + gauss()*spread,
+        y: a.ay + gauss()*spread,
+        z: a.az + gauss()*spread,
+        r:cr, g:cg, b:cb
+      });
+    }
+
+    // ── Tendril ──
+    // Narrow stream flowing outward. Length and density
+    // both scale with metric value.
+    // Exponential distribution along ray = denser near
+    // sphere, tapering to sparse at tip — matches reference.
+    const tendrilLen  = 0.8 + (val/100) * 2.2; // max reach beyond sphere
+    const coneRadius  = 0.025;                   // very tight
+    const tN2 = Math.floor((val/100) * N * 0.06);
+    for(let i=0; i<tN2; i++){
+      // exponential falloff: most particles near sphere surface
+      const dist = -tendrilLen * Math.log(1 - Math.random()*0.95);
+      // tiny jitter perpendicular to ray direction
+      const jitter = coneRadius * (1 - dist/(tendrilLen*2));
+      // build perpendicular via cross with arbitrary vector
+      const px2 = ndz*gauss()*jitter;
+      const py2 = gauss()*jitter;
+      const pz2 = -ndx*gauss()*jitter;
+      pts.push({
+        x: a.ax + ndx*dist + px2,
+        y: a.ay + ndy*dist + py2,
+        z: a.az + ndz*dist + pz2,
+        r:cr, g:cg, b:cb
+      });
+    }
+  });
+
+  return pts;
+}
+
+/* ═══════════════════════════════════════════════════
+   PROJECT — near-orthographic, matching the TD look.
+   The reference particles don't visibly shrink with
+   depth — it looks almost like a parallel projection.
+   We use a very large focal distance to achieve this.
+═══════════════════════════════════════════════════ */
+function project(x,y,z, rotY,rotX, cx,cy, scale){
+  // Y rotation
+  const cy_=Math.cos(rotY), sy_=Math.sin(rotY);
+  const nx =  x*cy_ + z*sy_;
+  const nz = -x*sy_ + z*cy_;
+  // X rotation
+  const cx_=Math.cos(rotX), sx_=Math.sin(rotX);
+  const ny =  y*cx_ - nz*sx_;
+  const fz =  y*sx_ + nz*cx_;
+  // Very weak perspective: focal length = 8× scale
+  // This makes far particles only ~5% smaller than near ones
+  const focal = 8.0;
+  const d = focal + fz;
+  return {
+    px: cx + (nx/d)*scale*focal,
+    py: cy + (ny/d)*scale*focal,
+    fz
+  };
+}
+
+/* ═══════════════════════════════════════════════════
+   DRAW CLOUD — shared between renderer and hero.
+   FIXED particle radius — exactly like TD reference.
+   No depth scaling of size at all.
+═══════════════════════════════════════════════════ */
+function drawCloud(ctx, particles, W, H, rotY, rotX, scaleMult=0.46){
+  ctx.clearRect(0,0,W,H);
+  ctx.fillStyle='#000';
+  ctx.fillRect(0,0,W,H);
+
+  const cx=W/2, cy=H/2;
+  const scale = Math.min(W,H) * scaleMult;
+
+  // Grey sphere ghost
+  const sR = scale * 0.70;
+  const sg = ctx.createRadialGradient(cx,cy,0, cx,cy,sR);
+  sg.addColorStop(0,   'rgba(72,80,95,0.30)');
+  sg.addColorStop(0.55,'rgba(52,60,74,0.22)');
+  sg.addColorStop(0.88,'rgba(32,38,50,0.12)');
+  sg.addColorStop(1,   'rgba(0,0,0,0)');
+  ctx.beginPath(); ctx.arc(cx,cy,sR,0,Math.PI*2);
+  ctx.fillStyle=sg; ctx.fill();
+
+  // Project all
+  const proj = new Array(particles.length);
+  for(let i=0; i<particles.length; i++){
+    const p = particles[i];
+    const {px,py,fz} = project(p.x,p.y,p.z, rotY,rotX, cx,cy, scale);
+    proj[i] = {px,py,fz, r:p.r,g:p.g,b:p.b, metric:p.metric||null};
+  }
+  // Painter's sort: back to front
+  proj.sort((a,b)=>a.fz-b.fz);
+
+  // FIXED radius — key to matching the TD look
+  // All particles draw at the same size regardless of depth
+  const DOT_R = Math.max(1.0, scale * 0.0095);
+
+  for(let i=0; i<proj.length; i++){
+    const p = proj[i];
+    // Slight brightness boost for front particles only (no size change)
+    ctx.globalAlpha = 0.78 + p.fz * 0.10;
+    ctx.fillStyle = `rgb(${p.r},${p.g},${p.b})`;
+    ctx.beginPath();
+    ctx.arc(p.px, p.py, DOT_R, 0, Math.PI*2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+}
+
+/* ═══════════════════════════════════════════════════
+   PARTICLE RENDERER (archive cards + modal)
+═══════════════════════════════════════════════════ */
+function createParticleRenderer(canvas, particles, opts={}){
+  const ctx = canvas.getContext('2d');
+  let W=0, H=0;
+  let rotY = opts.initRotY || 0;
+  let rotX = opts.initRotX || 0.12;
+  let autoRotate = true;
+  let isDragging=false, lastX=0, lastY=0;
+  let animId;
+
+  function syncSize(){
+    const nW = canvas.offsetWidth||360, nH = canvas.offsetHeight||220;
+    if(canvas.width!==nW||canvas.height!==nH){ canvas.width=W=nW; canvas.height=H=nH; }
+    else { W=nW; H=nH; }
+  }
+  syncSize();
+
+  if(opts.interactive){
+    canvas.addEventListener('mousedown', e=>{ isDragging=true; lastX=e.clientX; lastY=e.clientY; autoRotate=false; });
+    window.addEventListener('mousemove', e=>{
+      if(!isDragging) return;
+      rotY += (e.clientX-lastX)*0.011; rotX += (e.clientY-lastY)*0.009;
+      rotX = Math.max(-1.2,Math.min(1.2,rotX));
+      lastX=e.clientX; lastY=e.clientY;
+    });
+    window.addEventListener('mouseup', ()=>isDragging=false);
+    canvas.addEventListener('touchstart', e=>{ isDragging=true; lastX=e.touches[0].clientX; lastY=e.touches[0].clientY; autoRotate=false; e.preventDefault(); },{passive:false});
+    canvas.addEventListener('touchmove', e=>{
+      if(!isDragging) return;
+      rotY += (e.touches[0].clientX-lastX)*0.012; rotX += (e.touches[0].clientY-lastY)*0.010;
+      lastX=e.touches[0].clientX; lastY=e.touches[0].clientY; e.preventDefault();
+    },{passive:false});
+    canvas.addEventListener('touchend', ()=>isDragging=false);
+  }
+
+  function draw(){
+    animId = requestAnimationFrame(draw);
+    if(autoRotate) rotY += 0.004;
+    syncSize();
+    drawCloud(ctx, particles, W, H, rotY, rotX, 0.46);
+  }
+  draw();
+  return { cleanup(){ cancelAnimationFrame(animId); } };
+}
+
+/* ═══════════════════════════════════════════════════
+   HERO — full-screen particle cloud, slow auto-rotate
+═══════════════════════════════════════════════════ */
+(function initHero(){
+  const canvas  = document.getElementById('hero-canvas');
+  const ctx     = canvas.getContext('2d');
+  const label   = document.getElementById('hero-label');
+  const hlDot   = document.getElementById('hl-dot');
+  const hlName  = document.getElementById('hl-name');
+  const hlSys   = document.getElementById('hl-sys');
+
+  const METRIC_LABELS = {
+    stress:'Stress', interest:'Interest', engagement:'Engagement',
+    excitement:'Excitement', attention:'Attention', relaxation:'Relaxation'
+  };
+
+  function randMetric(min=20, max=95){ return Math.floor(min + Math.random()*(max-min)); }
+  const heroMetrics = {
+    stress:     randMetric(),
+    interest:   randMetric(),
+    engagement: randMetric(),
+    excitement: randMetric(),
+    attention:  randMetric(),
+    relaxation: randMetric(),
+  };
+  const particles = buildParticleData(heroMetrics, 7000);
+  let rotY=0, t=0;
+  let mouseX=-9999, mouseY=-9999, hovering=false;
+  let activeMetric = null;
+  let labelFade = 0; // 0..1 smooth transition
+
+  canvas.addEventListener('mousemove', e => {
+    const rect = canvas.getBoundingClientRect();
+    mouseX = e.clientX - rect.left;
+    mouseY = e.clientY - rect.top;
+    hovering = true;
+  });
+  canvas.addEventListener('mouseleave', () => {
+    hovering = false; mouseX=-9999; mouseY=-9999;
+    activeMetric = null;
+    label.classList.remove('visible');
+  });
+
+  function drawHero(){
+    requestAnimationFrame(drawHero);
+    t += 0.003;
+    rotY += 0.0035;
+    const W = canvas.offsetWidth, H = canvas.offsetHeight;
+    if(canvas.width!==W||canvas.height!==H){ canvas.width=W; canvas.height=H; }
+
+    ctx.clearRect(0,0,W,H);
+    ctx.fillStyle='#000'; ctx.fillRect(0,0,W,H);
+
+    const cx=W/2, cy=H/2;
+    const scale = Math.min(W,H) * 0.52;
+    const rotX  = 0.12 + Math.sin(t*0.2)*0.03;
+
+    // Ghost sphere
+    const sR = scale * 0.70;
+    const sg = ctx.createRadialGradient(cx,cy,0,cx,cy,sR);
+    sg.addColorStop(0,   'rgba(72,80,95,0.30)');
+    sg.addColorStop(0.55,'rgba(52,60,74,0.22)');
+    sg.addColorStop(0.88,'rgba(32,38,50,0.12)');
+    sg.addColorStop(1,   'rgba(0,0,0,0)');
+    ctx.beginPath(); ctx.arc(cx,cy,sR,0,Math.PI*2);
+    ctx.fillStyle=sg; ctx.fill();
+
+    // Project
+    const proj = new Array(particles.length);
+    for(let i=0; i<particles.length; i++){
+      const p = particles[i];
+      const {px,py,fz} = project(p.x,p.y,p.z, rotY,rotX, cx,cy, scale);
+      proj[i] = {px,py,fz, r:p.r,g:p.g,b:p.b, metric:p.metric||null};
+    }
+    proj.sort((a,b)=>a.fz-b.fz);
+
+    const DOT_R  = Math.max(1.0, scale * 0.0095);
+    const SENSE_R = Math.min(W,H) * 0.10; // detection radius
+
+    // Find closest metric particle to cursor
+    let closestDist = Infinity, closestMetric = null, closestPx = 0, closestPy = 0;
+    if(hovering){
+      for(let i=0; i<proj.length; i++){
+        const p = proj[i];
+        if(!p.metric) continue;
+        const dx = p.px - mouseX, dy = p.py - mouseY;
+        const d  = Math.sqrt(dx*dx + dy*dy);
+        if(d < closestDist){ closestDist=d; closestMetric=p.metric; closestPx=p.px; closestPy=p.py; }
+      }
+    }
+
+    // Update label
+    if(hovering && closestMetric && closestDist < SENSE_R){
+      const col = MC[closestMetric];
+      hlDot.style.background = col;
+      hlDot.style.color = col;
+      hlDot.style.boxShadow = `0 0 14px 5px ${col}`;
+      hlName.textContent = METRIC_LABELS[closestMetric];
+      hlName.style.color = col;
+      hlSys.textContent  = `${heroMetrics[closestMetric]}% · EEG_SIGNAL`;
+      // Position above cursor
+      label.style.left = mouseX + 'px';
+      label.style.top  = (mouseY - 10) + 'px';
+      label.classList.add('visible');
+      activeMetric = closestMetric;
+    } else {
+      label.classList.remove('visible');
+      activeMetric = closestMetric && closestDist < SENSE_R * 2 ? closestMetric : null;
+    }
+
+    // Draw particles
+    for(let i=0; i<proj.length; i++){
+      const p = proj[i];
+      const baseAlpha = 0.78 + p.fz * 0.10;
+
+      if(hovering && p.metric){
+        const isActive = p.metric === activeMetric;
+        const dx = p.px - mouseX, dy = p.py - mouseY;
+        const dist = Math.sqrt(dx*dx + dy*dy);
+        const inZone = dist < SENSE_R * 1.8;
+
+        if(isActive && inZone){
+          // Brightly lit — full color, swelled
+          const prox  = Math.max(0, 1 - dist/(SENSE_R*1.8));
+          const boost = prox * prox;
+          const r = Math.min(255, Math.round(p.r * (1 + boost*2.0)));
+          const g = Math.min(255, Math.round(p.g * (1 + boost*2.0)));
+          const b = Math.min(255, Math.round(p.b * (1 + boost*2.0)));
+          // Soft halo
+          ctx.globalAlpha = boost * 0.2;
+          ctx.fillStyle = `rgb(${r},${g},${b})`;
+          ctx.beginPath(); ctx.arc(p.px, p.py, DOT_R*3.5, 0, Math.PI*2); ctx.fill();
+          // Core
+          ctx.globalAlpha = Math.min(1, baseAlpha + boost*0.5);
+          ctx.fillStyle = `rgb(${r},${g},${b})`;
+          ctx.beginPath(); ctx.arc(p.px, p.py, DOT_R*(1+boost*2), 0, Math.PI*2); ctx.fill();
+        } else if(isActive){
+          // Same metric, outside zone — still bright
+          ctx.globalAlpha = baseAlpha + 0.15;
+          ctx.fillStyle = `rgb(${p.r},${p.g},${p.b})`;
+          ctx.beginPath(); ctx.arc(p.px, p.py, DOT_R*1.4, 0, Math.PI*2); ctx.fill();
+        } else {
+          // Different metric — dim right down
+          ctx.globalAlpha = baseAlpha * 0.18;
+          ctx.fillStyle = `rgb(${p.r},${p.g},${p.b})`;
+          ctx.beginPath(); ctx.arc(p.px, p.py, DOT_R, 0, Math.PI*2); ctx.fill();
+        }
+      } else if(hovering && !p.metric){
+        // Teal base — dim when any metric is active
+        ctx.globalAlpha = activeMetric ? baseAlpha * 0.12 : baseAlpha;
+        ctx.fillStyle = `rgb(${p.r},${p.g},${p.b})`;
+        ctx.beginPath(); ctx.arc(p.px, p.py, DOT_R, 0, Math.PI*2); ctx.fill();
+      } else {
+        ctx.globalAlpha = baseAlpha;
+        ctx.fillStyle = `rgb(${p.r},${p.g},${p.b})`;
+        ctx.beginPath(); ctx.arc(p.px, p.py, DOT_R, 0, Math.PI*2); ctx.fill();
+      }
+    }
+    ctx.globalAlpha = 1;
+  }
+  drawHero();
+})();
+
+/* ═══════════════════════════════════════════════════
+   MINI WAVE (reusable for gen + modal)
+═══════════════════════════════════════════════════ */
+function initMiniWave(canvasId, getMetrics){
+  const canvas=document.getElementById(canvasId);
+  if(!canvas)return;
+  const ctx=canvas.getContext('2d');
+  let W,H;
+  function resize(){ W=canvas.width=canvas.offsetWidth||canvas.width; H=canvas.height=canvas.offsetHeight||canvas.height; }
+  resize(); window.addEventListener('resize',resize);
+  let t=0;
+  function draw(){
+    requestAnimationFrame(draw); t+=0.03;
+    W=canvas.offsetWidth||W; H=canvas.offsetHeight||H;
+    if(canvas.width!==W||canvas.height!==H){canvas.width=W;canvas.height=H;}
+    ctx.clearRect(0,0,W,H);
+    const m=getMetrics();
+    MKEYS.forEach((k,i)=>{
+      const amp=(m[k]/100)*(H*.36);
+      const freq=0.8+i*.22;
+      ctx.beginPath(); ctx.strokeStyle=MC[k]; ctx.lineWidth=1.0; ctx.globalAlpha=.65;
+      for(let x=0;x<=W;x+=2){
+        const xt=(x/W)*Math.PI*2*2.5;
+        const y=H/2+Math.sin(xt*freq+t+i*.5)*amp;
+        x===0?ctx.moveTo(x,y):ctx.lineTo(x,y);
+      }
+      ctx.stroke();
+    });
+    ctx.globalAlpha=1;
+  }
+  draw();
+}
+
+/* ═══════════════════════════════════════════════════
+   GLB VIEWER — Three.js renderer for real .glb models
+   Used when a specimen has a glb field.
+   Returns same {cleanup} interface as particle renderer.
+═══════════════════════════════════════════════════ */
+function createGLBViewer(container, glbPath, opts={}){
+  const W = container.offsetWidth || 360;
+  const H = container.offsetHeight || 220;
+
+  const renderer = new THREE.WebGLRenderer({ antialias:true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.setSize(W, H);
+  renderer.setClearColor(0x000000, 1);
+  container.appendChild(renderer.domElement);
+  Object.assign(renderer.domElement.style, {
+    position:'absolute', inset:'0', width:'100%', height:'100%'
+  });
+
+  const scene  = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(45, W/H, 0.001, 1000);
+  camera.position.set(0, 0, 10);
+
+  // Neutral lighting — MeshBasicMaterial ignores lights,
+  // but keep them for fallback StandardMaterial meshes
+  scene.add(new THREE.AmbientLight(0xffffff, 2));
+  const dl = new THREE.DirectionalLight(0xffffff, 1);
+  dl.position.set(1, 2, 3);
+  scene.add(dl);
+
+  let model      = null;
+  let rotY       = 0, rotX = 0.08;
+  let isDragging = false, lastX = 0, lastY = 0;
+  let autoRotate = true;
+  let animId;
+
+  // ── Extract texture PNG bytes directly from GLB binary ──────────
+  // This avoids all async Blob/parser issues in Three.js r128.
+  // We read the GLB ourselves, pull the PNG bufferView,
+  // create an ImageBitmap, then build a DataTexture-free CanvasTexture.
+  function extractTextureFromGLB(arrayBuffer){
+    return new Promise((resolve, reject) => {
+      try {
+        const dv   = new DataView(arrayBuffer);
+        // Skip 12-byte GLB header, read JSON chunk
+        const jsonLen  = dv.getUint32(12, true);
+        const jsonText = new TextDecoder().decode(new Uint8Array(arrayBuffer, 20, jsonLen));
+        const json     = JSON.parse(jsonText);
+
+        // Binary chunk starts after JSON chunk (8-byte chunk header + jsonLen)
+        const binOffset = 20 + jsonLen + 8; // +8 for bin chunk header
+
+        // Follow baseColorTexture index to get the correct image
+        const mat      = json.materials && json.materials[0];
+        const texIdx   = mat?.pbrMetallicRoughness?.baseColorTexture?.index ?? 0;
+        const imgIdx   = json.textures?.[texIdx]?.source ?? 0;
+        const imgDef   = json.images && json.images[imgIdx];
+        if(!imgDef || imgDef.bufferView === undefined){
+          return resolve(null);
+        }
+        const bv      = json.bufferViews[imgDef.bufferView];
+        const imgBytes = new Uint8Array(arrayBuffer, binOffset + bv.byteOffset, bv.byteLength);
+        const blob     = new Blob([imgBytes], { type: imgDef.mimeType || 'image/png' });
+
+        createImageBitmap(blob).then(bitmap => {
+          const tex        = new THREE.CanvasTexture(bitmap);
+          tex.encoding     = THREE.LinearEncoding;
+          tex.flipY        = false; // GLB UVs are not flipped
+          tex.needsUpdate  = true;
+          resolve(tex);
+        }).catch(reject);
+      } catch(e){ reject(e); }
+    });
+  }
+
+  // ── Load GLB ────────────────────────────────────────────────────
+  function loadGLB(arrayBuffer){
+    extractTextureFromGLB(arrayBuffer).then(tex => {
+      const gltfLoader = new THREE.GLTFLoader();
+      gltfLoader.parse(arrayBuffer, '', gltf => {
+        model = gltf.scene;
+        scene.add(model);
+
+        // Fit camera
+        const box     = new THREE.Box3().setFromObject(model);
+        const cent    = box.getCenter(new THREE.Vector3());
+        const maxDim  = box.getSize(new THREE.Vector3()).length();
+        model.position.sub(cent);
+        const fovRad  = camera.fov * Math.PI / 180;
+        const dist    = (maxDim / 2) / Math.tan(fovRad / 2) * 1.1;
+        camera.position.set(0, 0, dist);
+        camera.near   = dist * 0.001;
+        camera.far    = dist * 100;
+        camera.updateProjectionMatrix();
+
+        // Apply our manually-decoded texture via MeshBasicMaterial
+        model.traverse(node => {
+          if(!node.isMesh) return;
+          node.material = new THREE.MeshBasicMaterial({
+            map:   tex || null,
+            color: tex ? 0xffffff : 0x888888,
+            side:  THREE.DoubleSide,
+          });
+        });
+
+        const lbl = container.querySelector('.glb-loading');
+        if(lbl) lbl.remove();
+      }, err => {
+        console.warn('GLB parse error:', err);
+        const lbl = container.querySelector('.glb-loading');
+        if(lbl) lbl.textContent = 'PARSE_ERROR';
+      });
+    }).catch(err => {
+      console.warn('Texture extract error:', err);
+    });
+  }
+
+  // Decode base64 data URI → ArrayBuffer then load
+  if(glbPath.startsWith('data:')){
+    try {
+      const b64 = glbPath.split(',')[1];
+      const bin = atob(b64);
+      const buf = new Uint8Array(bin.length);
+      for(let i = 0; i < bin.length; i++) buf[i] = bin.charCodeAt(i);
+      loadGLB(buf.buffer);
+    } catch(e){
+      console.warn('GLB decode error:', e);
+      const lbl = container.querySelector('.glb-loading');
+      if(lbl) lbl.textContent = 'DECODE_ERROR';
+    }
+  } else {
+    const xhr = new XMLHttpRequest();
+    xhr.open('GET', glbPath, true);
+    xhr.responseType = 'arraybuffer';
+    xhr.onload = function() {
+      if(xhr.status === 200 || xhr.status === 0) {
+        loadGLB(xhr.response);
+      } else {
+        console.warn('GLB load failed, status:', xhr.status, glbPath);
+        const lbl = container.querySelector('.glb-loading');
+        if(lbl) lbl.textContent = 'ERROR_' + xhr.status;
+      }
+    };
+    xhr.onerror = function(e) {
+      console.warn('GLB XHR error:', e, glbPath);
+      const lbl = container.querySelector('.glb-loading');
+      if(lbl) lbl.textContent = 'NET_ERROR';
+    };
+    xhr.send();
+  }
+
+  // ── Interaction ─────────────────────────────────────────────────
+  if(opts.interactive){
+    renderer.domElement.addEventListener('mousedown', e=>{ isDragging=true; lastX=e.clientX; lastY=e.clientY; autoRotate=false; });
+    window.addEventListener('mousemove', e=>{
+      if(!isDragging) return;
+      rotY += (e.clientX-lastX)*0.012; rotX += (e.clientY-lastY)*0.009;
+      rotX = Math.max(-1.2, Math.min(1.2, rotX));
+      lastX=e.clientX; lastY=e.clientY;
+    });
+    window.addEventListener('mouseup', ()=>isDragging=false);
+    renderer.domElement.addEventListener('touchstart', e=>{ isDragging=true; lastX=e.touches[0].clientX; lastY=e.touches[0].clientY; autoRotate=false; e.preventDefault(); },{passive:false});
+    renderer.domElement.addEventListener('touchmove', e=>{
+      if(!isDragging) return;
+      rotY += (e.touches[0].clientX-lastX)*0.013; rotX += (e.touches[0].clientY-lastY)*0.010;
+      lastX=e.touches[0].clientX; lastY=e.touches[0].clientY; e.preventDefault();
+    },{passive:false});
+    renderer.domElement.addEventListener('touchend', ()=>isDragging=false);
+  }
+
+  // ── Animate ──────────────────────────────────────────────────────
+  function animate(){
+    animId = requestAnimationFrame(animate);
+    if(autoRotate) rotY += 0.005;
+    if(model){ model.rotation.y = rotY; model.rotation.x = rotX; }
+    const nW = container.offsetWidth, nH = container.offsetHeight;
+    if(nW > 0 && nH > 0 && (renderer.domElement.width !== nW || renderer.domElement.height !== nH)){
+      renderer.setSize(nW, nH);
+      camera.aspect = nW / nH;
+      camera.updateProjectionMatrix();
+    }
+    renderer.render(scene, camera);
+  }
+  animate();
+
+  return {
+    cleanup(){
+      cancelAnimationFrame(animId);
+      renderer.dispose();
+      if(renderer.domElement.parentNode) renderer.domElement.parentNode.removeChild(renderer.domElement);
+    }
+  };
+}
+
+/* ═══════════════════════════════════════════════════
+   ARCHIVE GRID
+═══════════════════════════════════════════════════ */
+const cardRenderers = {};
+
+function renderGrid(filter='all'){
+  const grid=document.getElementById('sgrid');
+  Object.values(cardRenderers).forEach(r=>r.cleanup());
+  for(const k in cardRenderers) delete cardRenderers[k];
+  grid.innerHTML='';
+
+  const list = filter==='all' ? SPECIMENS : SPECIMENS.filter(s=>s.dominant===filter);
+
+  list.forEach((s,idx)=>{
+    const card=document.createElement('div');
+    card.className='scard fade-up';
+    card.style.transitionDelay=`${idx*0.06}s`;
+
+    const topM=Object.entries(s.metrics).sort((a,b)=>b[1]-a[1]).slice(0,3);
+    const pills=topM.map(([k,v])=>`<div class="spill ${k}"><span class="spill-dot"></span>${k.toUpperCase()} ${v}</div>`).join('');
+
+    const total=Object.values(s.metrics).reduce((a,b)=>a+b,0);
+    const barSegs=Object.entries(s.metrics).map(([k,v])=>
+      `<div class="cb-seg" style="width:${(v/total*100).toFixed(1)}%;background:${MC[k]};"></div>`
+    ).join('');
+
+    card.innerHTML=`
+      <div class="scard-preview" id="cp-${s.id}">
+        ${s.glb ? '' : `<canvas id="cc-${s.id}"></canvas>`}
+        <div class="card-hud">
+          <div class="chud-tl">${s.id}</div>
+          <div class="chud-tr">${s.dominant.toUpperCase()}</div>
+          <div class="card-bar">${barSegs}</div>
+        </div>
+      </div>
+      ${s.colorMap ? `<img class="cm-thumb" src="${s.colorMap}" alt="color map" title="COLOR_MAP">` : ''}
+      <div class="scard-info">
+        <div class="sc-id">${s.id} · ${s.date}</div>
+        <div class="sc-name">${s.title}</div>
+        <div class="sc-prompt">"${s.prompt}"</div>
+        <div class="sc-pills">${pills}</div>
+      </div>`;
+
+    card.addEventListener('click',()=>openModal(s));
+    grid.appendChild(card);
+
+    requestAnimationFrame(()=>{
+      const preview = document.getElementById(`cp-${s.id}`);
+      if(s.glb){
+        // GLB specimen — Three.js viewer
+        const loadLbl = document.createElement('div');
+        loadLbl.className='glb-loading';
+        loadLbl.textContent='LOADING_MODEL...';
+        Object.assign(loadLbl.style,{position:'absolute',inset:'0',display:'flex',alignItems:'center',justifyContent:'center',fontFamily:'var(--mono)',fontSize:'9px',color:'rgba(255,255,255,.28)',letterSpacing:'.14em',zIndex:'2'});
+        preview.appendChild(loadLbl);
+        cardRenderers[s.id] = createGLBViewer(preview, s.glb, {interactive:false});
+      } else {
+        // Procedural particle cloud
+        const canvasEl = document.getElementById(`cc-${s.id}`);
+        if(canvasEl){
+          const pData = buildParticleData(s.metrics, 2800);
+          cardRenderers[s.id] = createParticleRenderer(canvasEl, pData, {interactive:false});
+        }
+      }
+      setTimeout(()=>card.classList.add('visible'), idx*65);
+    });
+  });
+}
+
+/* ═══════════════════════════════════════════════════
+   MODAL
+═══════════════════════════════════════════════════ */
+let modalRenderer=null;
+
+function openModal(s){
+  if(modalRenderer){modalRenderer.cleanup();modalRenderer=null;}
+
+  const overlay=document.getElementById('moverlay');
+  const wrap=document.getElementById('m-canvas-wrap');
+  const body=document.getElementById('m-body');
+
+  // Remove old canvas (but keep hud + wave)
+  Array.from(wrap.querySelectorAll('canvas:not(#m-wave-canvas)')).forEach(c=>c.remove());
+  document.getElementById('mhud-id').textContent=s.id;
+
+  const metRows=Object.entries(s.metrics).map(([k,v])=>`
+    <div class="mm-row">
+      <div class="mm-left">
+        <div class="mm-ring" style="border-color:${MC[k]};box-shadow:0 0 4px ${MC[k]}"></div>
+        <span class="mm-label">${k}</span>
+      </div>
+      <div class="mm-bar-bg"><div class="mm-bar-fill" style="width:${v}%;background:${MC[k]};box-shadow:0 0 4px ${MC[k]}"></div></div>
+      <div class="mm-val" style="color:${MC[k]}">${v}.0</div>
+    </div>`).join('');
+
+  body.innerHTML=`
+    <div class="m-sys-bar"><span style="color:#00ff44;font-size:7px">●</span>&nbsp;SPECIMEN_LOADED · RENDER_ACTIVE</div>
+    <div class="m-id">// ${s.id}</div>
+    <div class="m-title">${s.title}</div>
+    <div class="m-date">${s.date} · DOMINANT: <span style="color:${MC[s.dominant]};text-shadow:0 0 5px ${MC[s.dominant]}">${s.dominant.toUpperCase()}</span></div>
+    <div class="m-prompt-wrap"><div class="m-prompt">"${s.prompt}"</div></div>
+    <div class="m-desc">${s.description}</div>
+    <div class="m-sec-lbl">// OUTPUT_PERCENTAGE (Z)</div>
+    <div class="m-metric-panel">${metRows}</div>
+    ${s.colorMap ? `
+    <div class="m-colormap-wrap">
+      <div class="m-sec-lbl" style="margin-top:16px;">// COLOR_MAP · TEXTURE_OUTPUT</div>
+      <img class="m-colormap-img" src="${s.colorMap}" alt="color map">
+      <div class="m-colormap-caption">EEG-DRIVEN PARTICLE COLORIZATION · UV BAKED</div>
+    </div>` : ''}`;
+
+  overlay.classList.add('open');
+  document.body.style.overflow='hidden';
+
+  requestAnimationFrame(()=>{
+    // Remove any old Three.js canvas (not the wave canvas)
+    Array.from(wrap.querySelectorAll('canvas:not(#m-wave-canvas)')).forEach(c=>c.remove());
+
+    if(s.glb){
+      // GLB — Three.js viewer fills the left panel
+      const loadLbl = document.createElement('div');
+      loadLbl.className='glb-loading';
+      loadLbl.textContent='LOADING_MODEL...';
+      Object.assign(loadLbl.style,{position:'absolute',inset:'0',display:'flex',alignItems:'center',justifyContent:'center',fontFamily:'var(--mono)',fontSize:'9px',color:'rgba(255,255,255,.28)',letterSpacing:'.14em',zIndex:'2'});
+      wrap.appendChild(loadLbl);
+      modalRenderer = createGLBViewer(wrap, s.glb, {interactive:true});
+    } else {
+      // Procedural particle cloud
+      const newCanvas = document.createElement('canvas');
+      newCanvas.style.cssText='position:absolute;inset:0;';
+      wrap.insertBefore(newCanvas, wrap.firstChild);
+      const pData = buildParticleData(s.metrics, 4500);
+      modalRenderer = createParticleRenderer(newCanvas, pData, {interactive:true, initRotY:0.3});
+    }
+    initMiniWave('m-wave-canvas',()=>s.metrics);
+  });
+}
+
+function closeModal(){
+  document.getElementById('moverlay').classList.remove('open');
+  document.body.style.overflow='';
+  if(modalRenderer){modalRenderer.cleanup();modalRenderer=null;}
+}
+document.getElementById('m-close').addEventListener('click',closeModal);
+document.getElementById('moverlay').addEventListener('click',e=>{if(e.target===document.getElementById('moverlay'))closeModal();});
+
+/* ═══════════════════════════════════════════════════
+   FILTERS
+═══════════════════════════════════════════════════ */
+document.querySelectorAll('.fbtn').forEach(b=>{
+  b.addEventListener('click',()=>{
+    document.querySelectorAll('.fbtn').forEach(x=>x.classList.remove('active'));
+    b.classList.add('active');
+    renderGrid(b.dataset.f);
+  });
+});
+
+/* ═══════════════════════════════════════════════════
+   SCROLL OBSERVER
+═══════════════════════════════════════════════════ */
+const obs=new IntersectionObserver(entries=>{
+  entries.forEach(e=>{if(e.isIntersecting){e.target.classList.add('visible');obs.unobserve(e.target);}});
+},{threshold:0.08,rootMargin:'0px 0px -36px 0px'});
+document.querySelectorAll('.fade-up').forEach(el=>obs.observe(el));
+
+function sTo(id){ document.getElementById(id)?.scrollIntoView({behavior:'smooth'}); }
+
+/* INIT */
+document.getElementById('arch-count').textContent =
+  `ARCHIVE_ONLINE · ${SPECIMENS.length} SPECIMEN${SPECIMENS.length!==1?'S':''} INDEXED`;
+renderGrid();
+</script>
+</body>
+</html>
