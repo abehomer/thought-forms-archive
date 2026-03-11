@@ -1320,8 +1320,11 @@ function createGLBViewer(container, glbPath, opts={}){
         if(!imgDef || imgDef.bufferView === undefined){
           return resolve(null);
         }
-        const bv      = json.bufferViews[imgDef.bufferView];
-        const imgBytes = new Uint8Array(arrayBuffer, binOffset + bv.byteOffset, bv.byteLength);
+        const bv    = json.bufferViews[imgDef.bufferView];
+        const start = binOffset + (bv.byteOffset || 0);
+        const end   = start + bv.byteLength;
+        if(start < 0 || end > arrayBuffer.byteLength){ return resolve(null); }
+        const imgBytes = new Uint8Array(arrayBuffer.slice(start, end));
         const blob     = new Blob([imgBytes], { type: imgDef.mimeType || 'image/png' });
 
         createImageBitmap(blob).then(bitmap => {
