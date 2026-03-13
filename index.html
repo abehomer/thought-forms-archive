@@ -498,6 +498,8 @@ section { position:relative; }
 .modal::before { top:0;left:0; border-top:2px solid #00ccff; border-left:2px solid #00ccff; }
 .modal::after  { bottom:0;right:0; border-bottom:2px solid #00ccff; border-right:2px solid #00ccff; }
 .moverlay.open .modal { transform:translateY(0); }
+.m-nav-btn{background:none;border:1px solid rgba(255,255,255,.18);color:rgba(255,255,255,.55);font-family:var(--mono);font-size:8px;letter-spacing:.12em;padding:4px 10px;cursor:pointer;transition:border-color .2s,color .2s;}
+.m-nav-btn:hover{border-color:#00ccff;color:#00ccff;}
 
 .m-canvas-wrap {
   position:relative; background:#000;
@@ -722,7 +724,7 @@ footer { padding:16px 40px; border-top:1px solid rgba(255,255,255,.07); display:
       <div class="m-hud">
         
         <div class="mhud-id" id="mhud-id">—</div>
-        <div class="mhud-drag">DRAG TO ROTATE</div>
+        <div class="mhud-drag">DRAG TO ROTATE · SCROLL TO ZOOM</div>
       </div>
       <div class="m-wave"><canvas id="m-wave-canvas"></canvas></div>
     </div>
@@ -1537,13 +1539,29 @@ function createGLBViewer(container, glbPath, opts={}){
       lastX=e.clientX; lastY=e.clientY;
     });
     window.addEventListener('mouseup', ()=>isDragging=false);
-    renderer.domElement.addEventListener('touchstart', e=>{ isDragging=true; lastX=e.touches[0].clientX; lastY=e.touches[0].clientY; autoRotate=false; e.preventDefault(); },{passive:false});
-    renderer.domElement.addEventListener('touchmove', e=>{
-      if(!isDragging) return;
-      rotY += (e.touches[0].clientX-lastX)*0.013; rotX += (e.touches[0].clientY-lastY)*0.010;
-      lastX=e.touches[0].clientX; lastY=e.touches[0].clientY; e.preventDefault();
+    renderer.domElement.addEventListener('wheel', e=>{
+      e.preventDefault();
+      const z = camera.position.z + e.deltaY * 0.01;
+      camera.position.z = Math.max(0.5, Math.min(z, 999));
     },{passive:false});
-    renderer.domElement.addEventListener('touchend', ()=>isDragging=false);
+    let lastPinchDist = null;
+    renderer.domElement.addEventListener('touchstart', e=>{
+      if(e.touches.length===1){ isDragging=true; lastX=e.touches[0].clientX; lastY=e.touches[0].clientY; autoRotate=false; }
+      else if(e.touches.length===2){ isDragging=false; lastPinchDist=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY); }
+      e.preventDefault();
+    },{passive:false});
+    renderer.domElement.addEventListener('touchmove', e=>{
+      if(e.touches.length===1&&isDragging){
+        rotY+=(e.touches[0].clientX-lastX)*0.013; rotX+=(e.touches[0].clientY-lastY)*0.010;
+        lastX=e.touches[0].clientX; lastY=e.touches[0].clientY;
+      } else if(e.touches.length===2&&lastPinchDist!==null){
+        const d=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY);
+        const z=camera.position.z-(d-lastPinchDist)*0.04;
+        camera.position.z=Math.max(0.5,Math.min(z,999)); lastPinchDist=d;
+      }
+      e.preventDefault();
+    },{passive:false});
+    renderer.domElement.addEventListener('touchend', e=>{ isDragging=false; if(e.touches.length<2) lastPinchDist=null; });
   }
 
   // ── Animate ──────────────────────────────────────────────────────
@@ -1650,8 +1668,10 @@ function renderGrid(filter='all'){
    MODAL
 ═══════════════════════════════════════════════════ */
 let modalRenderer=null;
+let currentModalIdx=0;
 
 function openModal(s){
+  currentModalIdx = SPECIMENS.findIndex(x=>x.id===s.id);
   if(modalRenderer){modalRenderer.cleanup();modalRenderer=null;}
 
   const overlay=document.getElementById('moverlay');
@@ -1673,7 +1693,10 @@ function openModal(s){
     </div>`).join('');
 
   body.innerHTML=`
-    <div class="m-sys-bar"><span style="color:#00ff44;font-size:7px">●</span>&nbsp;SPECIMEN_LOADED · RENDER_ACTIVE</div>
+    <div class="m-sys-bar" style="display:flex;align-items:center;justify-content:space-between;">
+      <span><span style="color:#00ff44;font-size:7px">&#9679;</span>&nbsp;SPECIMEN_LOADED &middot; RENDER_ACTIVE</span>
+      <span class="m-nav"><button class="m-nav-btn" onclick="modalStep(-1)">&#8592; PREV</button><span id="m-nav-pos" style="color:rgba(255,255,255,.35);font-size:8px;letter-spacing:.1em;padding:0 8px;"></span><button class="m-nav-btn" onclick="modalStep(1)">NEXT &#8594;</button></span>
+    </div>
     <div class="m-id">// ${s.id}</div>
     <div class="m-title">${s.title}</div>
     <div class="m-date">${s.date} · DOMINANT: <span style="color:${MC[s.dominant]};text-shadow:0 0 5px ${MC[s.dominant]}">${s.dominant.toUpperCase()}</span></div>
@@ -1690,6 +1713,7 @@ function openModal(s){
 
   overlay.classList.add('open');
   document.body.style.overflow='hidden';
+  document.getElementById('m-nav-pos').textContent = (currentModalIdx+1)+' / '+SPECIMENS.length;
 
   requestAnimationFrame(()=>{
     // Remove any old Three.js canvas (not the wave canvas)
@@ -1721,6 +1745,11 @@ function closeModal(){
   if(modalRenderer){modalRenderer.cleanup();modalRenderer=null;}
 }
 document.getElementById('m-close').addEventListener('click',closeModal);
+
+function modalStep(dir){
+  const next=(currentModalIdx+dir+SPECIMENS.length)%SPECIMENS.length;
+  openModal(SPECIMENS[next]);
+}
 document.getElementById('moverlay').addEventListener('click',e=>{if(e.target===document.getElementById('moverlay'))closeModal();});
 
 /* ═══════════════════════════════════════════════════
